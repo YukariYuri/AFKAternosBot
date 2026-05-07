@@ -19,8 +19,8 @@
   },
   "utils": {
     "auto-auth": {
-      "enabled": true,
-      "password": "chalol78"
+      "enabled": false,
+      "password": ""
     },
     "anti-afk": {
       "enabled": true,
