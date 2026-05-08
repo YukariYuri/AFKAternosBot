@@ -980,6 +980,11 @@ app.post("/start", (req, res) => {
   if (botRunning) return res.json({ success: false, msg: "Already running" });
 
   botRunning = true;
+  resetReconnectState();
+  botState.connected = false;
+  botState.lastActivity = Date.now();
+  botState.lastPacket = Date.now();
+
   createBot();
   addLog("[Control] Bot started");
 
@@ -990,7 +995,7 @@ app.post("/stop", (req, res) => {
   if (!botRunning) return res.json({ success: false, msg: "Already stopped" });
 
   botRunning = false;
-  clearBotTimeouts();
+  resetReconnectState();
 
   if (bot) {
     try {
@@ -1153,6 +1158,13 @@ function clearBotTimeouts() {
     clearTimeout(connectionTimeoutId);
     connectionTimeoutId = null;
   }
+}
+
+function resetReconnectState() {
+  clearBotTimeouts();
+  isReconnecting = false;
+  botState.reconnectAttempts = 0;
+  botState.wasThrottled = false;
 }
 
 // FIX: Discord rate limiting - track last send time
