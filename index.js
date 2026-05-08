@@ -20,6 +20,7 @@ const PORT = process.env.PORT || 5000;
 let botState = {
   connected: false,
   lastActivity: Date.now(),
+  lastPacket: Date.now(),
   reconnectAttempts: 0,
   startTime: Date.now(),
   errors: [],
@@ -989,12 +990,19 @@ app.post("/stop", (req, res) => {
   if (!botRunning) return res.json({ success: false, msg: "Already stopped" });
 
   botRunning = false;
+  clearBotTimeouts();
 
   if (bot) {
-    bot.end();
+    try {
+      bot.removeAllListeners();
+      bot.end();
+    } catch (e) {
+      addLog(`[Control] Error while stopping bot: ${e.message}`);
+    }
     bot = null;
   }
 
+  botState.connected = false;
   clearAllIntervals();
   addLog("[Control] Bot stopped");
 
@@ -1185,6 +1193,11 @@ function getReconnectDelay() {
 }
 
 function createBot() {
+  if (!botRunning) {
+    addLog("[Bot] Bot is stopped, skipping connect.");
+    return;
+  }
+
   if (isReconnecting) {
     addLog("[Bot] Already reconnecting, skipping...");
     return;
@@ -1220,15 +1233,21 @@ function createBot() {
       port: config.server.port,
       version: botVersion,
       hideErrors: false,
-      checkTimeoutInterval: 600000,
+      checkTimeoutInterval: 30000,
     });
 
     bot.loadPlugin(pathfinder);
 
+    if (bot._client) {
+      bot._client.on("packet", () => {
+        botState.lastPacket = Date.now();
+      });
+    }
+
     // FIX: connection timeout - end the old bot before reconnecting to avoid ghost bots
     clearBotTimeouts();
     connectionTimeoutId = setTimeout(() => {
-      if (!botState.connected) {
+      if (botRunning && !botState.connected) {
         addLog("[Bot] Connection timeout - no spawn received");
         try {
           bot.removeAllListeners();
@@ -1251,6 +1270,7 @@ function createBot() {
       clearBotTimeouts();
       botState.connected = true;
       botState.lastActivity = Date.now();
+      botState.lastPacket = Date.now();
       botState.reconnectAttempts = 0;
       isReconnecting = false;
 
@@ -1277,6 +1297,7 @@ function createBot() {
       defaultMove.fallDamageCost = 1000;
 
       initializeModules(bot, mcData, defaultMove);
+      startConnectionWatchdog(bot);
 
       // Attempt creative mode (only works if bot has OP and enabled in settings)
       setTimeout(() => {
@@ -1370,6 +1391,12 @@ function createBot() {
 function scheduleReconnect() {
   clearBotTimeouts();
 
+  if (!botRunning || !config.utils["auto-reconnect"]) {
+    isReconnecting = false;
+    addLog("[Bot] Auto-reconnect disabled or bot stopped, not reconnecting.");
+    return;
+  }
+
   // FIX: don't stack reconnect if already waiting
   if (isReconnecting) {
     addLog("[Bot] Reconnect already scheduled, skipping duplicate.");
@@ -1394,6 +1421,29 @@ function scheduleReconnect() {
 // ============================================================
 // MODULE INITIALIZATION
 // ============================================================
+function startConnectionWatchdog(currentBot) {
+  const staleAfterMs = 3 * 60 * 1000;
+
+  addInterval(() => {
+    if (!botRunning || !currentBot || !botState.connected) return;
+
+    const idleMs = Date.now() - botState.lastPacket;
+    if (idleMs < staleAfterMs) return;
+
+    addLog(
+      `[Watchdog] No packets for ${Math.round(idleMs / 1000)}s - forcing reconnect`,
+    );
+    botState.connected = false;
+
+    try {
+      currentBot.end();
+    } catch (e) {
+      addLog(`[Watchdog] Error ending stale bot: ${e.message}`);
+      scheduleReconnect();
+    }
+  }, 60 * 1000);
+}
+
 function initializeModules(bot, mcData, defaultMove) {
   addLog("[Modules] Initializing all modules...");
 
