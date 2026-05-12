@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>{{BOT_NAME}} - Logs</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" media="print" onload="this.media='all'"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+
+      body {
+        font-family: 'Inter', -apple-system, sans-serif;
+        background: #0d1117;
+        color: #e6edf3;
+        margin: 0;
+        padding: 40px 24px;
+      }
+
+      main {
+        width: 100%;
+        max-width: 760px;
+        margin: 0 auto;
+      }
+
+      .back-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        color: #8b949e;
+        text-decoration: none;
+        background: #161b22;
+        border: 1px solid #21262d;
+        border-radius: 8px;
+        padding: 7px 14px;
+        margin-bottom: 32px;
+        transition: color 0.2s, background 0.2s;
+      }
+      .back-btn:hover { background: #21262d; color: #c9d1d9; }
+
+      .page-header {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .page-header-left h1 {
+        font-size: 26px;
+        font-weight: 700;
+        color: #f0f6fc;
+        margin: 0;
+        line-height: 1.2;
+      }
+      .page-header-left p {
+        font-size: 14px;
+        color: #8b949e;
+        margin: 6px 0 0;
+      }
+
+      .badge {
+        font-size: 12px;
+        font-weight: 600;
+        color: #8b949e;
+        background: #161b22;
+        border: 1px solid #21262d;
+        border-radius: 20px;
+        padding: 4px 12px;
+        white-space: nowrap;
+      }
+
+      .log-card {
+        background: #0d1117;
+        border: 1px solid #21262d;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+
+      .log-card-header {
+        background: #161b22;
+        border-bottom: 1px solid #21262d;
+        padding: 12px 18px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .dot { width: 10px; height: 10px; border-radius: 50%; }
+      .dot-red   { background: #ff5f57; }
+      .dot-yellow{ background: #ffbd2e; }
+      .dot-green { background: #28c840; }
+
+      .log-card-title {
+        font-size: 12px;
+        font-weight: 500;
+        color: #484f58;
+        margin-left: 4px;
+      }
+
+      .log-body {
+        padding: 16px 18px;
+        max-height: 560px;
+        overflow-y: auto;
+        font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+        font-size: 12.5px;
+        line-height: 1.7;
+        background: #010409;
+      }
+
+      .log-entry { display: block; padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
+      .log-entry.error   { color: #ff7b72; }
+      .log-entry.warn    { color: #e3b341; }
+      .log-entry.success { color: #3fb950; }
+      .log-entry.control { color: #58a6ff; }
+      .log-entry.default { color: #8b949e; }
+
+      .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+        color: #484f58;
+        font-size: 13px;
+      }
+
+      .refresh-bar {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 6px;
+        margin-top: 12px;
+        font-size: 12px;
+        color: #484f58;
+      }
+      .refresh-dot {
+        width: 7px; height: 7px;
+        border-radius: 50%;
+        background: #3fb950;
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+      }
+
+      footer { margin-top: 32px; text-align: center; }
+      footer p { font-size: 12px; color: #484f58; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a href="/" class="back-btn">&#8592; Back to Dashboard</a>
+
+      <div class="page-header">
+        <div class="page-header-left">
+          <h1>Bot Logs</h1>
+          <p>Live output from the AFK bot</p>
+        </div>
+        <span class="badge" id="log-count">0 entries</span>
+      </div>
+
+      <div class="log-card">
+        <div class="log-card-header">
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+          <span class="log-card-title">bot.log</span>
+        </div>
+        <div class="log-body" id="log-body">
+          <div class="empty-state">Loading logs...</div>
+        </div>
+      </div>
+
+      <div class="refresh-bar">
+        <span class="refresh-dot"></span>
+        <span id="refresh-label">Auto-refreshing every 5 seconds</span>
+      </div>
+
+      <footer>
+        <p>AFK Bot Dashboard &middot; {{BOT_NAME}}</p>
+      </footer>
+    </main>
+
+    <script>
+      function escapeHTML(str) {
+        return str.replace(/[&<>"']/g, function(m) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+        });
+      }
+
+      async function update() {
+        try {
+          const r = await fetch('/health');
+          const data = await r.json();
+          const logBody = document.getElementById('log-body');
+          const logCount = document.getElementById('log-count');
+
+          if (data.logs && data.logs.length > 0) {
+            logCount.textContent = data.logs.length + (data.logs.length === 1 ? ' entry' : ' entries');
+            const html = data.logs.map(l => {
+              const escaped = escapeHTML(l);
+              const lower = l.toLowerCase();
+              let cls = 'default';
+              if (lower.includes('error') || lower.includes('fail')) cls = 'error';
+              else if (lower.includes('warn')) cls = 'warn';
+              else if (lower.includes('[control]')) cls = 'control';
+              else if (lower.includes('connect') || lower.includes('join') || lower.includes('spawn')) cls = 'success';
+              return '<span class="log-entry ' + cls + '">' + escaped + '</span>';
+            }).join('');
+            
+            const isAtBottom = logBody.scrollHeight - logBody.clientHeight <= logBody.scrollTop + 50;
+            logBody.innerHTML = html;
+            if (isAtBottom) logBody.scrollTop = logBody.scrollHeight;
+          } else {
+            logBody.innerHTML = '<div class="empty-state">No log entries yet.</div>';
+          }
+        } catch (e) {}
+      }
+
+      setInterval(update, 5000);
+      update();
+    </script>
+  </body>
+</html>

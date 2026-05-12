@@ -36,6 +36,29 @@ We have made setup super easy! Check out the guide below:
 
 ---
 
+## Aternos Auto-Start (Browser Automation)
+
+This project uses browser automation (Puppeteer) to interact with Aternos. It can automatically start the server when offline, handle the queue, and sync the Minecraft bot connection.
+
+### How to set up:
+1.  **Dependencies**: Ensure you have installed the required dependencies (`npm install`).
+2.  **Enable Feature**: Set `settings.json` -> `aternos.auto-start.enabled` to `true`.
+3.  **Initial Login**:
+    - By default, `headless` is set to `false`. When you start the bot, a browser window will open.
+    - **Log in to Aternos manually** in that window (Google login, etc., are supported).
+    - Once logged in and on the server page, the bot will save your session in the `.aternos_browser_data` folder.
+    - After the first successful login, you can set `headless: true` in `settings.json` to run it in the background.
+4.  **Bot Sync**:
+    - The bot will automatically disconnect when the server is offline or in queue.
+    - The bot will automatically connect when the server is "Starting" (counting down) or "Online".
+
+Console commands:
+- `status` - show the current bot and Aternos monitor state.
+
+Note: This system is designed to bypass Cloudflare and handle the complex Aternos queue flow automatically. Keep the browser window open or the session data folder intact.
+
+---
+
 ## ⚠️ Disclaimer
 This project is not affiliated with Aternos, Mojang, or Microsoft. Use at your own risk. Misuse may violate platform terms of service. This bot does not bypass Aternos queue limits; it only keeps the server active once it is online.
 

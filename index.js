@@ -1,5 +1,9 @@
 "use strict";
 
+// Load .env FIRST so ATERNOS_SESSION / ATERNOS_AJAX_TOKEN env vars are available
+require("dotenv").config();
+
+
 const { addLog, getLogs } = require("./logger");
 const mineflayer = require("mineflayer");
 const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
@@ -8,6 +12,8 @@ const config = require("./settings.json");
 const express = require("express");
 const http = require("http");
 const https = require("https");
+const fs = require("fs");
+const AternosController = require("./aternosController");
 
 // ============================================================
 // EXPRESS SERVER - Keep Render/Aternos alive
@@ -15,6 +21,30 @@ const https = require("https");
 const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 5000;
+
+// Stats tracking (Persistent)
+let stats = { totalPlaytime: 0 };
+let memoryStats = {
+  totalHeapUsed: 0,
+  samples: 0,
+  avgHeapUsed: 0
+};
+
+try {
+  if (fs.existsSync("./stats.json")) {
+    stats = JSON.parse(fs.readFileSync("./stats.json", "utf8"));
+  }
+} catch (e) {
+  addLog("[Stats] Failed to load stats.json, starting fresh.");
+}
+
+function saveStats() {
+  try {
+    fs.writeFileSync("./stats.json", JSON.stringify(stats, null, 2));
+  } catch (e) {
+    // Ignore save errors
+  }
+}
 
 // Bot state tracking
 let botState = {
@@ -27,952 +57,78 @@ let botState = {
   wasThrottled: false,
 };
 
-// Health check endpoint for monitoring
-app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <title>${config.name} Dashboard</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" media="print" onload="this.media='all'"
-              href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-        <style>
-          *, *::before, *::after { box-sizing: border-box; }
+// Track total time on server (Playtime) and memory stats
+setInterval(() => {
+  if (botState.connected) {
+    stats.totalPlaytime++;
+    // Save to disk every 30 seconds to be safe
+    if (stats.totalPlaytime % 30 === 0) saveStats();
+  }
 
-          body {
-            font-family: 'Inter', -apple-system, sans-serif;
-            background: #0d1117;
-            color: #e6edf3;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 24px;
-          }
+  // Sample memory every second for average
+  const currentHeap = process.memoryUsage().heapUsed / 1024 / 1024;
+  memoryStats.totalHeapUsed += currentHeap;
+  memoryStats.samples++;
+  memoryStats.avgHeapUsed = memoryStats.totalHeapUsed / memoryStats.samples;
+}, 1000);
 
-          main { width: 100%; max-width: 400px; }
-
-          header { margin-bottom: 28px; }
-          header h1 {
-            font-size: 26px;
-            font-weight: 700;
-            color: #f0f6fc;
-            margin: 0;
-            line-height: 1.2;
-          }
-          header p {
-            font-size: 14px;
-            color: #8b949e;
-            margin: 6px 0 0;
-            line-height: 1.5;
-          }
-
-          .status-section {
-            border-radius: 12px;
-            padding: 20px 24px;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            transition: background 0.3s, border-color 0.3s;
-          }
-          .status-section.online  { background: #0d2218; border: 2px solid #238636; }
-          .status-section.offline { background: #200d0d; border: 2px solid #da3633; }
-
-          .status-icon {
-            width: 44px; height: 44px;
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 20px; flex-shrink: 0;
-            transition: background 0.3s;
-          }
-          .status-icon.online  { background: #238636; }
-          .status-icon.offline { background: #da3633; }
-
-          .status-label { font-size: 18px; font-weight: 700; line-height: 1.2; transition: color 0.3s; }
-          .status-label.online  { color: #3fb950; }
-          .status-label.offline { color: #f85149; }
-          .status-detail { font-size: 13px; color: #8b949e; margin-top: 3px; }
-
-          dl { margin: 0; }
-          .stat-card {
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 10px;
-            padding: 16px 20px;
-            margin-bottom: 10px;
-          }
-          dt { font-size: 12px; color: #8b949e; font-weight: 600; margin-bottom: 4px; }
-          dd { margin: 0; font-size: 17px; font-weight: 600; color: #e6edf3; line-height: 1.3; }
-          .stat-detail { margin: 4px 0 0; font-size: 11px; color: #6e7681; }
-
-          .controls { margin-top: 8px; }
-          .btn-grid { display: grid; gap: 10px; margin-bottom: 10px; }
-          .btn-grid-2 { grid-template-columns: 1fr 1fr; }
-
-          .btn-primary {
-            min-height: 52px; border-radius: 10px;
-            font-size: 15px; font-weight: 700;
-            cursor: pointer; letter-spacing: 0.3px;
-            transition: opacity 0.2s, filter 0.2s;
-            font-family: inherit;
-          }
-          .btn-primary:hover  { filter: brightness(1.1); }
-          .btn-primary:active { opacity: 0.85; }
-          .btn-start { border: 2px solid #238636; background: #0d2218; color: #3fb950; }
-          .btn-stop  { border: 2px solid #da3633; background: #200d0d; color: #f85149; }
-
-          .btn-secondary {
-            min-height: 44px; border-radius: 10px;
-            border: 1px solid #21262d; background: #161b22; color: #8b949e;
-            font-size: 13px; font-weight: 500;
-            text-decoration: none;
-            display: flex; align-items: center; justify-content: center;
-            font-family: inherit; cursor: pointer;
-            transition: background 0.2s, color 0.2s;
-          }
-          .btn-secondary:hover { background: #21262d; color: #c9d1d9; }
-
-          footer { margin-top: 20px; text-align: center; }
-          footer p { font-size: 12px; color: #484f58; margin: 0; }
-        </style>
-      </head>
-      <body>
-        <main role="main" aria-label="AFK Bot Dashboard">
-
-          <header>
-            <h1>AFK Bot Dashboard</h1>
-            <p>Minecraft server bot &middot; Live status</p>
-          </header>
-
-          <section
-            id="status-section"
-            role="status"
-            aria-live="polite"
-            aria-label="Bot connection status"
-            class="status-section offline"
-          >
-            <div id="status-icon" aria-hidden="true" class="status-icon offline">&#x2717;</div>
-            <div>
-              <div id="status-label" class="status-label offline">Connecting…</div>
-              <div id="status-detail" class="status-detail">Establishing connection</div>
-            </div>
-          </section>
-
-          <section aria-label="Bot statistics">
-            <dl>
-              <div class="stat-card">
-                <dt>Uptime</dt>
-                <dd id="uptime-text">—</dd>
-                <p class="stat-detail">Time since last connection</p>
-              </div>
-              <div class="stat-card">
-                <dt>Coordinates</dt>
-                <dd id="coords-text">Searching…</dd>
-                <p class="stat-detail">Bot's current in-game position</p>
-              </div>
-              <div class="stat-card">
-                <dt>Server address</dt>
-                <dd>${config.server.ip}</dd>
-                <p class="stat-detail">Minecraft server hostname</p>
-              </div>
-            </dl>
-          </section>
-
-          <section class="controls" aria-label="Bot controls">
-            <div class="btn-grid btn-grid-2">
-              <button class="btn-primary btn-start" onclick="startBot()" aria-label="Start bot">Start bot</button>
-              <button class="btn-primary btn-stop" onclick="stopBot()" aria-label="Stop bot">Stop bot</button>
-            </div>
-            <div class="btn-grid btn-grid-2">
-              <a href="/tutorial" class="btn-secondary" aria-label="View setup guide">Setup guide</a>
-              <a href="/logs" class="btn-secondary" aria-label="View bot logs">View logs</a>
-            </div>
-          </section>
-
-          <footer>
-            <p>Status updates every 5 seconds</p>
-          </footer>
-
-        </main>
-
-        <script>
-          function formatUptime(s) {
-            const h = Math.floor(s / 3600);
-            const m = Math.floor((s % 3600) / 60);
-            const sec = s % 60;
-            if (h > 0) return h + 'h ' + m + 'm ' + sec + 's';
-            if (m > 0) return m + 'm ' + sec + 's';
-            return sec + ' seconds';
-          }
-
-          async function update() {
-            try {
-              const r = await fetch('/health');
-              const data = await r.json();
-              const online = data.status === 'connected';
-
-              const section = document.getElementById('status-section');
-              const icon    = document.getElementById('status-icon');
-              const label   = document.getElementById('status-label');
-              const detail  = document.getElementById('status-detail');
-
-              section.className = 'status-section ' + (online ? 'online' : 'offline');
-              icon.className    = 'status-icon '    + (online ? 'online' : 'offline');
-              icon.textContent  = online ? '✓' : '✗';
-              label.className   = 'status-label '   + (online ? 'online' : 'offline');
-              label.textContent = online ? 'Connected' : 'Disconnected';
-              detail.textContent = online ? 'Bot is active on the server' : 'Attempting to reconnect';
-
-              document.getElementById('uptime-text').textContent = formatUptime(data.uptime);
-
-              if (data.coords) {
-                const x = Math.floor(data.coords.x);
-                const y = Math.floor(data.coords.y);
-                const z = Math.floor(data.coords.z);
-                document.getElementById('coords-text').textContent = 'X ' + x + ', Y ' + y + ', Z ' + z;
-              } else {
-                document.getElementById('coords-text').textContent = 'Searching…';
-              }
-            } catch (e) {
-              const label = document.getElementById('status-label');
-              label.className = 'status-label offline';
-              label.textContent = 'Unreachable';
-            }
-          }
-
-          async function startBot() {
-            const r = await fetch('/start', { method: 'POST' });
-            const data = await r.json();
-            alert(data.success ? 'Bot started!' : data.msg);
-            update();
-          }
-
-          async function stopBot() {
-            const r = await fetch('/stop', { method: 'POST' });
-            const data = await r.json();
-            alert(data.success ? 'Bot stopped!' : data.msg);
-            update();
-          }
-
-          setInterval(update, 5000);
-          update();
-        </script>
-      </body>
-    </html>
-  `);
+// Also save stats on exit
+process.on("SIGINT", () => {
+  saveStats();
+  process.exit();
 });
-app.get("/tutorial", (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <title>${config.name} - Setup Guide</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" media="print" onload="this.media='all'"
-              href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-        <style>
-          *, *::before, *::after { box-sizing: border-box; }
-
-          body {
-            font-family: 'Inter', -apple-system, sans-serif;
-            background: #0d1117;
-            color: #e6edf3;
-            margin: 0;
-            padding: 40px 24px;
-          }
-
-          main {
-            width: 100%;
-            max-width: 560px;
-            margin: 0 auto;
-          }
-
-          .back-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            font-weight: 500;
-            color: #8b949e;
-            text-decoration: none;
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 8px;
-            padding: 7px 14px;
-            margin-bottom: 32px;
-            transition: color 0.2s, background 0.2s;
-          }
-          .back-btn:hover { background: #21262d; color: #c9d1d9; }
-
-          header { margin-bottom: 32px; }
-          header h1 {
-            font-size: 26px;
-            font-weight: 700;
-            color: #f0f6fc;
-            margin: 0;
-            line-height: 1.2;
-          }
-          header p {
-            font-size: 14px;
-            color: #8b949e;
-            margin: 6px 0 0;
-            line-height: 1.5;
-          }
-
-          .step-card {
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 16px;
-          }
-
-          .step-header {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            margin-bottom: 18px;
-          }
-
-          .step-number {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: #0d2218;
-            border: 2px solid #238636;
-            color: #3fb950;
-            font-size: 14px;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-          }
-
-          .step-title {
-            font-size: 16px;
-            font-weight: 700;
-            color: #f0f6fc;
-            margin: 0;
-          }
-
-          ol {
-            margin: 0;
-            padding: 0;
-            list-style: none;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-          }
-
-          li {
-            font-size: 14px;
-            color: #8b949e;
-            line-height: 1.6;
-            padding-left: 20px;
-            position: relative;
-          }
-
-          li::before {
-            content: "·";
-            position: absolute;
-            left: 6px;
-            color: #3fb950;
-            font-weight: 700;
-          }
-
-          li strong { color: #e6edf3; font-weight: 600; }
-
-          code {
-            background: #21262d;
-            border: 1px solid #30363d;
-            padding: 2px 7px;
-            border-radius: 5px;
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 12px;
-            color: #e6edf3;
-          }
-
-          a { color: #58a6ff; text-decoration: none; }
-          a:hover { text-decoration: underline; }
-
-          footer {
-            margin-top: 32px;
-            text-align: center;
-          }
-          footer p { font-size: 12px; color: #484f58; margin: 0; }
-        </style>
-      </head>
-      <body>
-        <main>
-          <a href="/" class="back-btn">&#8592; Back to Dashboard</a>
-
-          <header>
-            <h1>Setup Guide</h1>
-            <p>Get your AFK bot running in under 15 minutes</p>
-          </header>
-
-          <div class="step-card">
-            <div class="step-header">
-              <div class="step-number">1</div>
-              <h2 class="step-title">Configure Aternos</h2>
-            </div>
-            <ol>
-              <li>Go to <strong>Aternos</strong> and open your server.</li>
-              <li>Install <strong>Paper/Bukkit</strong> as your server software.</li>
-              <li>Enable <strong>Cracked</strong> mode using the green switch.</li>
-              <li>Install these plugins: <code>ViaVersion</code>, <code>ViaBackwards</code>, <code>ViaRewind</code></li>
-            </ol>
-          </div>
-
-          <div class="step-card">
-            <div class="step-header">
-              <div class="step-number">2</div>
-              <h2 class="step-title">GitHub Setup</h2>
-            </div>
-            <ol>
-              <li>Download this project as a ZIP and extract it.</li>
-              <li>Edit <code>settings.json</code> with your server IP and port.</li>
-              <li>Upload all files to a new <strong>GitHub Repository</strong>.</li>
-            </ol>
-          </div>
-
-          <div class="step-card">
-            <div class="step-header">
-              <div class="step-number">3</div>
-              <h2 class="step-title">Deploy on Replit (Free 24/7)</h2>
-            </div>
-            <ol>
-              <li>Import your GitHub repo into <strong>Replit</strong>.</li>
-              <li>Set the run command to <code>npm start</code>.</li>
-              <li>Hit <strong>Run</strong> — the bot connects automatically.</li>
-              <li>The bot pings itself every 10 minutes to stay alive.</li>
-            </ol>
-          </div>
-
-          <footer>
-            <p>AFK Bot Dashboard &middot; ${config.name}</p>
-          </footer>
-        </main>
-      </body>
-    </html>
-  `);
+process.on("SIGTERM", () => {
+  saveStats();
+  process.exit();
 });
+
+// ============================================================
+//                    WEB SERVER & DASHBOARD
+// ============================================================
+
+// Load HTML templates once at startup
+const templates = {};
+const templateFiles = ["dashboard.html", "tutorial.html", "logs.html"];
+
+templateFiles.forEach(f => {
+  try {
+    templates[f] = fs.readFileSync(`./${f}`, "utf8");
+  } catch (e) {
+    addLog(`[Server] Warning: ${f} not found.`);
+  }
+});
+
+/**
+ * Helper to get template and inject basic variables
+ */
+function getTemplate(name) {
+  if (!templates[name]) return `Template ${name} not found`;
+  return templates[name]
+    .replace(/{{BOT_NAME}}/g, config.name)
+    .replace(/{{SERVER_IP}}/g, config.server.ip)
+    .replace(/{{SERVER_PORT}}/g, config.server.port);
+}
+
+// Web Endpoints
+app.get('/', (req, res) => res.send(getTemplate("dashboard.html")));
+app.get('/tutorial', (req, res) => res.send(getTemplate("tutorial.html")));
+app.get('/logs', (req, res) => res.send(getTemplate("logs.html")));
 
 app.get("/health", (req, res) => {
   res.json({
     status: botState.connected ? "connected" : "disconnected",
-    uptime: Math.floor((Date.now() - botState.startTime) / 1000),
+    uptime: stats.totalPlaytime,
+    logs: getLogs(),
     coords: bot && bot.entity ? bot.entity.position : null,
     lastActivity: botState.lastActivity,
     reconnectAttempts: botState.reconnectAttempts,
+    aternos: aternosController ? aternosController.getPublicState() : null,
     memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
+    avgMemory: memoryStats.avgHeapUsed,
   });
 });
 
 app.get("/ping", (req, res) => res.send("pong"));
-
-app.get("/logs", (req, res) => {
-  const logs = getLogs();
-
-  const escapeHTML = (str) =>
-    str.replace(
-      /[&<>"']/g,
-      (m) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[m],
-    );
-
-  const logCount = logs.length;
-
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <title>${config.name} - Logs</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" media="print" onload="this.media='all'"
-              href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-        <style>
-          *, *::before, *::after { box-sizing: border-box; }
-
-          body {
-            font-family: 'Inter', -apple-system, sans-serif;
-            background: #0d1117;
-            color: #e6edf3;
-            margin: 0;
-            padding: 40px 24px;
-          }
-
-          main {
-            width: 100%;
-            max-width: 760px;
-            margin: 0 auto;
-          }
-
-          .back-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            font-weight: 500;
-            color: #8b949e;
-            text-decoration: none;
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 8px;
-            padding: 7px 14px;
-            margin-bottom: 32px;
-            transition: color 0.2s, background 0.2s;
-          }
-          .back-btn:hover { background: #21262d; color: #c9d1d9; }
-
-          .page-header {
-            display: flex;
-            align-items: flex-end;
-            justify-content: space-between;
-            margin-bottom: 20px;
-            gap: 12px;
-            flex-wrap: wrap;
-          }
-
-          .page-header-left h1 {
-            font-size: 26px;
-            font-weight: 700;
-            color: #f0f6fc;
-            margin: 0;
-            line-height: 1.2;
-          }
-          .page-header-left p {
-            font-size: 14px;
-            color: #8b949e;
-            margin: 6px 0 0;
-          }
-
-          .badge {
-            font-size: 12px;
-            font-weight: 600;
-            color: #8b949e;
-            background: #161b22;
-            border: 1px solid #21262d;
-            border-radius: 20px;
-            padding: 4px 12px;
-            white-space: nowrap;
-          }
-
-          .log-card {
-            background: #0d1117;
-            border: 1px solid #21262d;
-            border-radius: 12px;
-            overflow: hidden;
-          }
-
-          .log-card-header {
-            background: #161b22;
-            border-bottom: 1px solid #21262d;
-            padding: 12px 18px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-          }
-
-          .dot { width: 10px; height: 10px; border-radius: 50%; }
-          .dot-red   { background: #ff5f57; }
-          .dot-yellow{ background: #ffbd2e; }
-          .dot-green { background: #28c840; }
-
-          .log-card-title {
-            font-size: 12px;
-            font-weight: 500;
-            color: #484f58;
-            margin-left: 4px;
-          }
-
-          .log-body {
-            padding: 16px 18px;
-            max-height: 560px;
-            overflow-y: auto;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 12.5px;
-            line-height: 1.7;
-          }
-
-          .log-entry { display: block; padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
-          .log-entry.error   { color: #ff7b72; }
-          .log-entry.warn    { color: #e3b341; }
-          .log-entry.success { color: #3fb950; }
-          .log-entry.control { color: #58a6ff; }
-          .log-entry.default { color: #8b949e; }
-
-          .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: #484f58;
-            font-size: 13px;
-          }
-
-          .refresh-bar {
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            gap: 6px;
-            margin-top: 12px;
-            font-size: 12px;
-            color: #484f58;
-          }
-          .refresh-dot {
-            width: 7px; height: 7px;
-            border-radius: 50%;
-            background: #3fb950;
-            animation: pulse 2s infinite;
-          }
-          @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-          }
-
-          .console-row {
-            display: flex;
-            align-items: center;
-            border-top: 1px solid #21262d;
-            background: #0d1117;
-            padding: 10px 18px;
-            gap: 10px;
-          }
-
-          .console-prompt {
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 13px;
-            color: #3fb950;
-            font-weight: 700;
-            flex-shrink: 0;
-            user-select: none;
-          }
-
-          .console-input {
-            flex: 1;
-            background: transparent;
-            border: none;
-            outline: none;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 12.5px;
-            color: #e6edf3;
-            caret-color: #3fb950;
-          }
-
-          .console-input::placeholder { color: #484f58; }
-
-          .console-send {
-            background: #0d2218;
-            border: 1px solid #238636;
-            color: #3fb950;
-            font-size: 12px;
-            font-weight: 600;
-            padding: 5px 14px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-family: inherit;
-            transition: background 0.2s;
-            flex-shrink: 0;
-          }
-          .console-send:hover { background: #122d1a; }
-          .console-send:disabled { opacity: 0.5; cursor: default; }
-
-          .console-wrap {
-            position: relative;
-          }
-
-          .cmd-suggestions {
-            display: none;
-            position: absolute;
-            bottom: calc(100% + 6px);
-            left: 0; right: 0;
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-            z-index: 10;
-          }
-
-          .cmd-suggestions.visible { display: block; }
-
-          .cmd-item {
-            display: flex;
-            align-items: baseline;
-            gap: 12px;
-            padding: 9px 16px;
-            cursor: pointer;
-            transition: background 0.12s;
-            border-bottom: 1px solid #21262d;
-          }
-          .cmd-item:last-child { border-bottom: none; }
-          .cmd-item:hover, .cmd-item.active {
-            background: #21262d;
-          }
-
-          .cmd-name {
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 12.5px;
-            font-weight: 700;
-            color: #3fb950;
-            flex-shrink: 0;
-            min-width: 90px;
-          }
-
-          .cmd-desc {
-            font-size: 12px;
-            color: #6e7681;
-          }
-
-          footer { margin-top: 32px; text-align: center; }
-          footer p { font-size: 12px; color: #484f58; margin: 0; }
-        </style>
-      </head>
-      <body>
-        <main>
-          <a href="/" class="back-btn">&#8592; Back to Dashboard</a>
-
-          <div class="page-header">
-            <div class="page-header-left">
-              <h1>Bot Logs</h1>
-              <p>Live output from the AFK bot</p>
-            </div>
-            <span class="badge">${logCount} ${logCount === 1 ? "entry" : "entries"}</span>
-          </div>
-
-          <div class="log-card">
-            <div class="log-card-header">
-              <span class="dot dot-red"></span>
-              <span class="dot dot-yellow"></span>
-              <span class="dot dot-green"></span>
-              <span class="log-card-title">bot.log</span>
-            </div>
-            <div class="log-body" id="log-body">
-              ${logCount === 0
-                ? `<div class="empty-state">No log entries yet. Start the bot to see output.</div>`
-                : logs.map((l) => {
-                    const escaped = escapeHTML(l);
-                    const lower = l.toLowerCase();
-                    let cls = "default";
-                    if (lower.includes("error") || lower.includes("fail")) cls = "error";
-                    else if (lower.includes("warn")) cls = "warn";
-                    else if (lower.includes("[control]")) cls = "control";
-                    else if (lower.includes("connect") || lower.includes("join") || lower.includes("spawn")) cls = "success";
-                    return `<span class="log-entry ${cls}">${escaped}</span>`;
-                  }).join("")
-              }
-            </div>
-            <div class="console-wrap">
-              <div class="cmd-suggestions" id="cmd-suggestions"></div>
-              <div class="console-row">
-                <span class="console-prompt">&gt;</span>
-                <input
-                  id="console-input"
-                  class="console-input"
-                  type="text"
-                  placeholder="Type / for commands, or any message…"
-                  autocomplete="off"
-                  spellcheck="false"
-                >
-                <button id="console-send" class="console-send">Send</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="refresh-bar">
-            <span class="refresh-dot"></span>
-            <span id="refresh-label">Auto-refreshing every 5 seconds</span>
-          </div>
-
-          <footer>
-            <p>AFK Bot Dashboard &middot; ${config.name}</p>
-          </footer>
-        </main>
-
-        <script>
-          (function() {
-            var logBody  = document.getElementById('log-body');
-            var input    = document.getElementById('console-input');
-            var sendBtn  = document.getElementById('console-send');
-            var label    = document.getElementById('refresh-label');
-            var sugBox   = document.getElementById('cmd-suggestions');
-            var refreshTimer = null;
-            var typing = false;
-            var activeIdx = -1;
-
-            var COMMANDS = [
-              { name: '/help',   desc: 'Show all available commands' },
-              { name: '/pos',    desc: "Show bot's current coordinates" },
-              { name: '/status', desc: 'Show connection status & uptime' },
-              { name: '/list',   desc: 'List players on the server' },
-              { name: '/say',    desc: 'Send a chat message in-game' },
-            ];
-
-            function scrollBottom() {
-              if (logBody) logBody.scrollTop = logBody.scrollHeight;
-            }
-
-            function scheduleRefresh() {
-              clearTimeout(refreshTimer);
-              if (!typing) {
-                refreshTimer = setTimeout(function() { location.reload(); }, 5000);
-              }
-            }
-
-            function appendLocalEntry(text, cls) {
-              var span = document.createElement('span');
-              span.className = 'log-entry ' + (cls || 'control');
-              span.textContent = text;
-              logBody.appendChild(span);
-              scrollBottom();
-            }
-
-            function hideSuggestions() {
-              sugBox.classList.remove('visible');
-              sugBox.innerHTML = '';
-              activeIdx = -1;
-            }
-
-            function setActive(idx) {
-              var items = sugBox.querySelectorAll('.cmd-item');
-              items.forEach(function(el, i) {
-                el.classList.toggle('active', i === idx);
-              });
-              activeIdx = idx;
-            }
-
-            function showSuggestions(val) {
-              var query = val.toLowerCase();
-              var matches = COMMANDS.filter(function(c) {
-                return c.name.startsWith(query);
-              });
-
-              if (!matches.length) { hideSuggestions(); return; }
-
-              sugBox.innerHTML = matches.map(function(c, i) {
-                return '<div class="cmd-item" data-cmd="' + c.name + '">' +
-                  '<span class="cmd-name">' + c.name + '</span>' +
-                  '<span class="cmd-desc">' + c.desc + '</span>' +
-                '</div>';
-              }).join('');
-
-              sugBox.querySelectorAll('.cmd-item').forEach(function(el) {
-                el.addEventListener('mousedown', function(e) {
-                  e.preventDefault();
-                  input.value = el.dataset.cmd + ' ';
-                  hideSuggestions();
-                  input.focus();
-                });
-              });
-
-              activeIdx = -1;
-              sugBox.classList.add('visible');
-            }
-
-            input.addEventListener('input', function() {
-              var val = input.value;
-              if (val.startsWith('/')) {
-                showSuggestions(val);
-              } else {
-                hideSuggestions();
-              }
-            });
-
-            input.addEventListener('keydown', function(e) {
-              var items = sugBox.querySelectorAll('.cmd-item');
-              if (sugBox.classList.contains('visible') && items.length) {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  setActive(Math.min(activeIdx + 1, items.length - 1));
-                  return;
-                }
-                if (e.key === 'ArrowUp') {
-                  e.preventDefault();
-                  setActive(Math.max(activeIdx - 1, 0));
-                  return;
-                }
-                if (e.key === 'Tab' || (e.key === 'Enter' && activeIdx >= 0)) {
-                  e.preventDefault();
-                  var chosen = items[activeIdx >= 0 ? activeIdx : 0];
-                  input.value = chosen.dataset.cmd + ' ';
-                  hideSuggestions();
-                  return;
-                }
-                if (e.key === 'Escape') {
-                  hideSuggestions();
-                  return;
-                }
-              }
-              if (e.key === 'Enter') sendCommand();
-            });
-
-            function sendCommand() {
-              var cmd = input.value.trim();
-              if (!cmd) return;
-              hideSuggestions();
-              input.value = '';
-              sendBtn.disabled = true;
-              appendLocalEntry('> ' + cmd, 'control');
-
-              fetch('/command', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: cmd })
-              })
-              .then(function(r) { return r.json(); })
-              .then(function(data) {
-                if (data.msg) {
-                  data.msg.split('\\n').forEach(function(line) {
-                    appendLocalEntry(line, data.success ? 'default' : 'error');
-                  });
-                }
-              })
-              .catch(function() {
-                appendLocalEntry('Failed to send command.', 'error');
-              })
-              .finally(function() {
-                sendBtn.disabled = false;
-                input.focus();
-                scheduleRefresh();
-              });
-            }
-
-            sendBtn.addEventListener('click', sendCommand);
-
-            input.addEventListener('focus', function() {
-              typing = true;
-              clearTimeout(refreshTimer);
-              label.textContent = 'Auto-refresh paused while typing';
-            });
-            input.addEventListener('blur', function() {
-              setTimeout(function() {
-                hideSuggestions();
-                typing = false;
-                label.textContent = 'Auto-refreshing every 5 seconds';
-                scheduleRefresh();
-              }, 150);
-            });
-
-            scrollBottom();
-            scheduleRefresh();
-          })();
-        </script>
-      </body>
-    </html>
-  `);
-});
 
 let botRunning = true;
 
@@ -985,6 +141,7 @@ app.post("/start", (req, res) => {
   botState.lastActivity = Date.now();
   botState.lastPacket = Date.now();
 
+  if (aternosController) aternosController.start();
   createBot();
   addLog("[Control] Bot started");
 
@@ -996,6 +153,7 @@ app.post("/stop", (req, res) => {
 
   botRunning = false;
   resetReconnectState();
+  if (aternosController) aternosController.stop();
 
   if (bot) {
     try {
@@ -1026,6 +184,8 @@ app.post("/command", express.json(), (req, res) => {
       "  /help          - Show this help message",
       "  /pos           - Show bot's current coordinates",
       "  /status        - Show bot connection status",
+      "  /aternos       - Show Aternos auto-start status",
+      "  /aternos start - Force an Aternos start check",
       "  /list          - Ask server for player list",
       "  /say <message> - Send a chat message in-game",
       "  /<anything>    - Send any Minecraft command directly",
@@ -1048,6 +208,29 @@ app.post("/command", express.json(), (req, res) => {
     const status = botState.connected ? "Connected" : "Disconnected";
     const uptime = Math.floor((Date.now() - botState.startTime) / 1000);
     const msg = `Status: ${status} | Uptime: ${uptime}s | Reconnects: ${botState.reconnectAttempts}`;
+    addLog(`[Console] ${msg}`);
+    return res.json({ success: true, msg });
+  }
+
+  if (cmd === "/aternos") {
+    const state = aternosController ? aternosController.getPublicState() : null;
+    const msg = state
+      ? `Aternos: enabled=${state.enabled} configured=${state.configured} status=${state.status?.class || "unknown"} error=${state.lastError || "none"}`
+      : "Aternos monitor is not initialized.";
+    addLog(`[Console] ${msg}`);
+    return res.json({ success: true, msg });
+  }
+
+  if (cmd === "/aternos start") {
+    if (!aternosController || !aternosController.getPublicState().configured) {
+      const msg = "Aternos session is not configured.";
+      addLog(`[Console] ${msg}`);
+      return res.json({ success: false, msg });
+    }
+    aternosController
+      .ensureStarted("manual-command")
+      .catch((err) => addLog(`[Aternos] ${err.message}`));
+    const msg = "Aternos start check queued.";
     addLog(`[Console] ${msg}`);
     return res.json({ success: true, msg });
   }
@@ -1148,6 +331,7 @@ let activeIntervals = [];
 let reconnectTimeoutId = null;
 let connectionTimeoutId = null;
 let isReconnecting = false;
+let aternosController = null;
 
 function clearBotTimeouts() {
   if (reconnectTimeoutId) {
@@ -1165,6 +349,39 @@ function resetReconnectState() {
   isReconnecting = false;
   botState.reconnectAttempts = 0;
   botState.wasThrottled = false;
+}
+
+function getAternosConfig() {
+  return config.aternos && config.aternos["auto-start"]
+    ? config.aternos["auto-start"]
+    : {};
+}
+
+function isAternosAutoStartEnabled() {
+  const aternosConfig = getAternosConfig();
+  return Boolean(aternosConfig.enabled);
+}
+
+function isAternosReadyForMinecraft() {
+  return !aternosController || aternosController.isReadyForMinecraft();
+}
+
+function disconnectCurrentBot(reason) {
+  clearAllIntervals();
+  clearBotTimeouts();
+  botState.connected = false;
+  isReconnecting = false;
+
+  if (!bot) return;
+
+  try {
+    bot.removeAllListeners();
+    bot.end(reason || "aternos-offline");
+  } catch (e) {
+    addLog(`[Cleanup] Error ending bot: ${e.message}`);
+  }
+
+  bot = null;
 }
 
 // FIX: Discord rate limiting - track last send time
@@ -1210,6 +427,16 @@ function createBot() {
     return;
   }
 
+  if (isAternosAutoStartEnabled() && !isAternosReadyForMinecraft()) {
+    addLog("[Bot] Aternos is not online yet - waiting for auto-start monitor.");
+    if (aternosController) {
+      aternosController
+        .ensureStarted("minecraft-connect-request")
+        .catch((err) => addLog(`[Aternos] ${err.message}`));
+    }
+    return;
+  }
+
   if (isReconnecting) {
     addLog("[Bot] Already reconnecting, skipping...");
     return;
@@ -1221,9 +448,8 @@ function createBot() {
     try {
       bot.removeAllListeners();
       bot.end();
-    } catch (e) {
-      addLog("[Cleanup] Error ending previous bot:", e.message);
-    }
+      bot.quit();
+    } catch (e) {}
     bot = null;
   }
 
@@ -1244,9 +470,15 @@ function createBot() {
       host: config.server.ip,
       port: config.server.port,
       version: botVersion,
+      viewDistance: 'tiny', // Memory optimization
       hideErrors: false,
       checkTimeoutInterval: 30000,
     });
+
+    // SPECTATOR MODE OPTIMIZATION: 
+    // Since the bot is in spectator mode, physics (gravity, collision) are not needed.
+    // Disabling this saves significant CPU and Memory.
+    bot.physicsEnabled = false;
 
     bot.loadPlugin(pathfinder);
 
@@ -1406,6 +638,17 @@ function scheduleReconnect() {
   if (!botRunning || !config.utils["auto-reconnect"]) {
     isReconnecting = false;
     addLog("[Bot] Auto-reconnect disabled or bot stopped, not reconnecting.");
+    return;
+  }
+
+  if (isAternosAutoStartEnabled() && !isAternosReadyForMinecraft()) {
+    isReconnecting = false;
+    addLog("[Bot] Minecraft reconnect paused until Aternos is online.");
+    if (aternosController) {
+      aternosController
+        .ensureStarted("minecraft-disconnected")
+        .catch((err) => addLog(`[Aternos] ${err.message}`));
+    }
     return;
   }
 
@@ -1967,9 +1210,14 @@ rl.on("line", (line) => {
   } else if (trimmed.startsWith("cmd ")) {
     bot.chat("/" + trimmed.slice(4));
   } else if (trimmed === "status") {
+    const aternosStatus = aternosController ? aternosController.getPublicState() : null;
+    const aternosLabel = aternosStatus?.status?.label || "N/A";
     addLog(
-      `Connected: ${botState.connected}, Uptime: ${formatUptime(Math.floor((Date.now() - botState.startTime) / 1000))}`,
+      `[Status] Bot: ${botState.connected ? "Connected" : "Disconnected"}, Uptime: ${formatUptime(Math.floor((Date.now() - botState.startTime) / 1000))}`,
     );
+    if (aternosStatus && aternosStatus.enabled) {
+      addLog(`[Status] Aternos: ${aternosLabel} (Running: ${aternosStatus.running})`);
+    }
   } else {
     bot.chat(trimmed);
   }
@@ -2136,6 +1384,33 @@ addLog(`Version: ${config.server.version}`);
 addLog(
   `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
 );
+addLog(
+  `Aternos Auto-Start: ${
+    isAternosAutoStartEnabled() ? "Enabled" : "Disabled"
+  }`,
+);
 addLog("=".repeat(50));
 
-createBot();
+async function main() {
+  aternosController = new AternosController({
+    config: getAternosConfig(),
+    addLog,
+    getBotState: () => ({
+      bot,
+      connected: botState.connected,
+      reconnecting: isReconnecting,
+    }),
+    disconnectBot: disconnectCurrentBot,
+    connectBot: createBot,
+  });
+
+  if (isAternosAutoStartEnabled()) {
+    await aternosController.start();
+  }
+  
+  createBot();
+}
+
+main().catch(err => {
+  addLog(`[FATAL] Startup error: ${err.message}`);
+});

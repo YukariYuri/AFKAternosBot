@@ -11,9 +11,14 @@
   "author": "Lamgerr",
   "license": "MIT",
   "dependencies": {
+    "dotenv": "^17.4.2",
     "express": "^4.18.1",
     "minecraft-data": "^3.103.0",
     "mineflayer": "^4.34.0",
-    "mineflayer-pathfinder": "^2.1.1"
+    "mineflayer-pathfinder": "^2.1.1",
+    "node-fetch": "^2.7.0",
+    "puppeteer": "^24.43.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
 }
