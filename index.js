@@ -177,6 +177,16 @@ app.post("/aternos/session", async (req, res) => {
   }
 });
 
+app.get("/aternos/info", async (req, res) => {
+  if (!aternosController || !aternosController.browser || !aternosController.browser.page) {
+    return res.status(404).json({ url: "None" });
+  }
+  res.json({
+    url: aternosController.browser.page.url(),
+    title: await aternosController.browser.page.title()
+  });
+});
+
 app.post("/aternos/click", async (req, res) => {
   if (!aternosController || !aternosController.browser) return res.status(404).json({ success: false });
   const { x, y } = req.body;
@@ -192,10 +202,19 @@ app.post("/aternos/type", async (req, res) => {
 });
 
 app.post("/aternos/navigate", async (req, res) => {
-  if (!aternosController || !aternosController.browser) return res.status(404).json({ success: false });
-  const { url } = req.body;
-  const success = await aternosController.browser.navigate(url);
-  res.json({ success });
+  if (!aternosController || !aternosController.browser || !aternosController.browser.page) {
+    return res.status(404).json({ success: false });
+  }
+  const { url, action } = req.body;
+  try {
+    if (action === 'back') await aternosController.browser.page.goBack();
+    else if (action === 'forward') await aternosController.browser.page.goForward();
+    else if (action === 'reload') await aternosController.browser.page.reload();
+    else if (url) await aternosController.browser.page.goto(url, { waitUntil: 'domcontentloaded' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 

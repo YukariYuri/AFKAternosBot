@@ -308,35 +308,45 @@
         </div>
       </div>
 
-      <div class="browser-section">
-        <div class="log-header">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <h2>Remote Browser</h2>
-            <div class="log-badge aternosbrowser">Manual Mode</div>
+      <div class="browser-section" style="background: #161b22; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;">
+        <!-- Browser Header / Chrome -->
+        <div style="background: #21262d; padding: 10px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border);">
+          <div style="display: flex; gap: 6px;">
+            <button onclick="browserNav('back')" style="background: none; border: none; color: #fff; cursor: pointer; padding: 4px; border-radius: 4px;">←</button>
+            <button onclick="browserNav('forward')" style="background: none; border: none; color: #fff; cursor: pointer; padding: 4px; border-radius: 4px;">→</button>
+            <button onclick="refreshBrowser()" style="background: none; border: none; color: #fff; cursor: pointer; padding: 4px; border-radius: 4px;">↻</button>
           </div>
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <div class="browser-status" id="browser-status">Idle</div>
-            <select id="refresh-rate" style="background: rgba(1,4,9,0.5); border: 1px solid var(--border); color: #fff; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer;">
-              <option value="0">Freeze (Save RAM)</option>
-              <option value="2000" selected>Fast (2s)</option>
-              <option value="5000">Medium (5s)</option>
-              <option value="15000">Slow (15s)</option>
-            </select>
+          <div id="chrome-url" style="flex: 1; background: #0d1117; border: 1px solid var(--border); border-radius: 100px; padding: 4px 15px; font-size: 11px; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 8px;">
+            <span style="color: var(--success); font-size: 14px;">🔒</span> 
+            <span>https://aternos.org/server/</span>
+          </div>
+          <select id="refresh-rate" style="background: rgba(1,4,9,0.5); border: 1px solid var(--border); color: #fff; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer;">
+            <option value="0">Freeze</option>
+            <option value="1000">1s (Live)</option>
+            <option value="3000" selected>3s (Normal)</option>
+            <option value="10000">10s (Eco)</option>
+          </select>
+        </div>
+
+        <div class="browser-container" style="padding: 0; background: #000; position: relative;">
+          <div class="browser-screen-wrapper" id="screen-wrapper" style="cursor: crosshair;">
+            <img id="browser-screen" src="" alt="Browser Screen" style="display: block; width: 100%; min-height: 400px; object-fit: contain;">
+            <div id="click-ripple" style="position: absolute; width: 30px; height: 30px; border: 2px solid var(--accent); border-radius: 50%; pointer-events: none; opacity: 0; transform: scale(0); transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1);"></div>
+          </div>
+          
+          <div style="background: #21262d; padding: 12px; display: flex; gap: 10px; border-top: 1px solid var(--border);">
+            <input type="text" id="browser-input" placeholder="Type into focused field..." style="flex: 1; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: #fff;">
+            <button class="browser-btn" onclick="sendBrowserText()" style="background: var(--accent); border: none; border-radius: 6px; padding: 0 20px; color: #fff; font-weight: 600; cursor: pointer;">Send Key</button>
+          </div>
+          
+          <div style="padding: 10px; display: flex; justify-content: center; gap: 10px; background: #161b22;">
+            <button onclick="goToAternos()" style="font-size: 11px; background: var(--warn); border: none; border-radius: 4px; padding: 4px 10px; color: #000; font-weight: 600;">Force Login Page</button>
+            <button onclick="goToAternosServer()" style="font-size: 11px; background: var(--success); border: none; border-radius: 4px; padding: 4px 10px; color: #fff; font-weight: 600;">Force Server Page</button>
           </div>
         </div>
-        <div class="browser-container">
-          <div class="browser-screen-wrapper" id="screen-wrapper">
-            <img id="browser-screen" src="" alt="Browser Screen" style="display: block; width: 100%; border-radius: 8px;">
-          </div>
-          <div class="browser-controls">
-            <input type="text" id="browser-input" placeholder="Type here...">
-            <button class="browser-btn" onclick="sendBrowserText()">Send</button>
-            <button class="browser-btn" onclick="refreshBrowser()" style="background: var(--border)">Refresh</button>
-            <button class="browser-btn" onclick="goToAternos()" style="background: var(--warn)">Login Page</button>
-            <button class="browser-btn" onclick="goToAternosServer()" style="background: var(--success)">Server Page</button>
-          </div>
-          <p class="stat-detail">💡 <b>Tip:</b> Click on the image above to interact. Set to <b>Freeze</b> to significantly reduce memory usage.</p>
-        </div>
+        <p class="stat-detail" style="padding: 8px 15px; margin: 0; font-size: 10px; color: #8b949e; background: #0d1117;">
+          💡 <b>Interactive Mode:</b> Click anywhere to simulate touch. Use <b>Send Key</b> for typing. Adblock warnings are auto-clicked every 10s.
+        </p>
       </div>
     </div>
 
@@ -461,29 +471,53 @@
         update();
       }
 
-      // Browser Remote Control
-      let lastScreenshot = 0;
+      // Browser Remote Control (Advanced Mode)
       async function refreshBrowser() {
-        const screen = document.getElementById('browser-screen');
-        const status = document.getElementById('browser-status');
+        const img = document.getElementById('browser-screen');
+        const timestamp = Date.now();
+        img.src = `/aternos/screenshot?t=${timestamp}`;
         
+        // Also update URL in chrome bar
         try {
-          const timestamp = Date.now();
-          screen.src = '/aternos/screenshot?t=' + timestamp;
-          status.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
-        } catch (e) {
-          status.textContent = 'Failed to load screen';
-        }
+          const r = await fetch('/aternos/info');
+          if (r.ok) {
+            const info = await r.json();
+            const urlEl = document.querySelector('#chrome-url span:last-child');
+            if (urlEl) urlEl.textContent = info.url;
+          }
+        } catch (e) {}
       }
 
-      document.getElementById('screen-wrapper').addEventListener('click', async (e) => {
-        const rect = e.target.getBoundingClientRect();
-        const x = Math.round(((e.clientX - rect.left) / rect.width) * 1280); // Based on our viewport size
-        const y = Math.round(((e.clientY - rect.top) / rect.height) * 720);
-        
-        const status = document.getElementById('browser-status');
-        status.textContent = 'Clicking at ' + x + ', ' + y + '...';
-        
+      async function browserNav(action) {
+        await fetch('/aternos/navigate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        });
+        setTimeout(refreshBrowser, 500);
+      }
+
+      const wrapper = document.getElementById('screen-wrapper');
+      const ripple = document.getElementById('click-ripple');
+
+      wrapper.addEventListener('click', async (e) => {
+        const rect = wrapper.getBoundingClientRect();
+        // Since we scale the image to fit width, we need to handle the mapping correctly
+        const x = Math.round((e.clientX - rect.left) * (1280 / rect.width));
+        const y = Math.round((e.clientY - rect.top) * (720 / rect.height));
+
+        // Show ripple effect
+        if (ripple) {
+          ripple.style.left = `${e.clientX - rect.left - 15}px`;
+          ripple.style.top = `${e.clientY - rect.top - 15}px`;
+          ripple.style.opacity = '1';
+          ripple.style.transform = 'scale(1)';
+          setTimeout(() => {
+            ripple.style.opacity = '0';
+            ripple.style.transform = 'scale(0)';
+          }, 400);
+        }
+
         await fetch('/aternos/click', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

@@ -18,6 +18,7 @@ class AternosBrowser {
     this.serverPage = "https://aternos.org/server/";
     this.isInitialized = false;
     this.initializing = null;
+    this.latestFrame = null;
   }
 
   async init() {
@@ -33,133 +34,211 @@ class AternosBrowser {
     }
     
     if (this.initializing) return this.initializing;
-
+    
     this.initializing = (async () => {
-      if (!fs.existsSync(this.userDataDir)) {
-        fs.mkdirSync(this.userDataDir, { recursive: true });
-      }
-
-      const launch = async (retryCount = 0) => {
-        // CLEANUP LOCK FILES (Fix for "browser is already running" error on Render/Linux)
-        const locks = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
-        for (const lock of locks) {
-          const lockPath = path.join(this.userDataDir, lock);
-          if (fs.existsSync(lockPath)) {
-            try {
-              fs.unlinkSync(lockPath);
-              this.addLog(`[AternosBrowser] Stale ${lock} removed.`);
-            } catch (e) {
-              // If we can't delete it, it's likely held by a live process
-            }
-          }
+      try {
+        if (!fs.existsSync(this.userDataDir)) {
+          fs.mkdirSync(this.userDataDir, { recursive: true });
         }
 
-        try {
-          if (retryCount === 0) {
-            this.addLog("[AternosBrowser] Launching browser...");
-          }
-          
-          this.browser = await puppeteer.launch({
-            headless: this.headless,
-            userDataDir: this.userDataDir,
-            args: [
-              "--no-sandbox",
-              "--disable-setuid-sandbox",
-              "--disable-blink-features=AutomationControlled",
-              "--no-first-run",
-              "--disable-dev-shm-usage",
-              "--disable-accelerated-2d-canvas",
-              "--disable-gpu",
-              "--no-zygote",
-              "--disable-extensions",
-              "--disable-component-update",
-              "--disable-default-apps",
-              "--disable-sync",
-              "--mute-audio",
-              "--hide-scrollbars",
-              "--disable-background-networking",
-              "--disable-background-timer-throttling",
-              "--disable-backgrounding-occluded-windows",
-              "--disable-breakpad",
-              "--disable-client-side-phishing-detection",
-              "--disable-features=Translate",
-              "--js-flags=--max-old-space-size=128", // Limit V8 heap memory
-              "--disable-canvas-aa",
-              "--disable-2d-canvas-clip-aa",
-              "--disable-gl-drawing-for-tests",
-              "--disable-hang-monitor",
-              "--disable-ipc-flooding-protection",
-              "--disable-popup-blocking",
-              "--disable-prompt-on-repost",
-              "--disable-renderer-backgrounding",
-              "--metrics-recording-only",
-              "--no-default-browser-check",
-            ],
-          });
-
-          const pages = await this.browser.pages();
-          this.page = pages.length > 0 ? pages[0] : await this.browser.newPage();
-
-          // CLOSE EXTRA TABS (Chrome sometimes restores previous crashed sessions)
-          if (pages.length > 1) {
-            for (let i = 1; i < pages.length; i++) {
-              try { await pages[i].close(); } catch (e) {}
+        const launch = async (retryCount = 0) => {
+          // ROBUST LOCK CLEANUP (Especially for Windows/Linux profile locks)
+          const cleanup = (dir) => {
+            const items = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'];
+            for (const item of items) {
+              const p = path.join(dir, item);
+              if (fs.existsSync(p)) {
+                try { fs.unlinkSync(p); } catch (e) {}
+              }
             }
-          }
+          };
+          cleanup(this.userDataDir);
+          cleanup(path.join(this.userDataDir, 'Default'));
 
-          if (this.headless) {
-            // Use standard viewport so remote dashboard works
+          try {
+            if (retryCount === 0) {
+              this.addLog("[AternosBrowser] Launching browser...");
+            }
+            
+            // On Windows, sometimes orphan processes keep the lock even after unlink.
+            // If we are retrying, try to kill any leftover chrome processes.
+            if (process.platform === 'win32' && retryCount > 0) {
+              try {
+                const { execSync } = require('child_process');
+                execSync('taskkill /F /IM chrome.exe /T', { stdio: 'ignore' });
+              } catch (e) {}
+            }
+            
+            this.browser = await puppeteer.launch({
+              headless: this.headless,
+              userDataDir: this.userDataDir,
+              args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled",
+                "--no-first-run",
+                "--disable-dev-shm-usage",
+                "--disable-accelerated-2d-canvas",
+                "--disable-gpu",
+                "--no-zygote",
+                "--disable-extensions",
+                "--disable-component-update",
+                "--disable-default-apps",
+                "--disable-sync",
+                "--mute-audio",
+                "--hide-scrollbars",
+                "--disable-background-networking",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-breakpad",
+                "--disable-client-side-phishing-detection",
+                "--disable-features=Translate",
+                "--js-flags=--max-old-space-size=128", // Limit V8 heap memory
+                "--disable-canvas-aa",
+                "--disable-2d-canvas-clip-aa",
+                "--disable-gl-drawing-for-tests",
+                "--disable-hang-monitor",
+                "--disable-ipc-flooding-protection",
+                "--disable-popup-blocking",
+                "--disable-prompt-on-repost",
+                "--disable-renderer-backgrounding",
+                "--metrics-recording-only",
+                "--no-default-browser-check",
+              ],
+            });
+
+            const pages = await this.browser.pages();
+            this.page = pages.length > 0 ? pages[0] : await this.browser.newPage();
+
+            // CLOSE EXTRA TABS (Chrome sometimes restores previous crashed sessions)
+            if (pages.length > 1) {
+              for (let i = 1; i < pages.length; i++) {
+                try { await pages[i].close(); } catch (e) {}
+              }
+            }
+
             await this.page.setViewport({ width: 1280, height: 720 });
-            await this.page.setCacheEnabled(false);
+            
+            // START SCREENCAST: This is much more efficient than taking screenshots.
+            const client = await this.page.target().createCDPSession();
+            await client.send('Page.startScreencast', { format: 'webp', quality: 40, maxWidth: 1280, maxHeight: 720 });
+            client.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
+              this.latestFrame = Buffer.from(data, 'base64');
+              client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+            });
 
-            // Block only heavy media, but allow images for login/captcha visibility
+            // Block ads and trackers to save RAM
             await this.page.setRequestInterception(true);
             this.page.on('request', (req) => {
+              const url = req.url().toLowerCase();
               const type = req.resourceType();
-              if (['font', 'media'].includes(type)) {
+              if (
+                ['font', 'media'].includes(type) ||
+                url.includes('popup')
+              ) {
                 req.abort();
               } else {
                 req.continue();
               }
             });
-          } else {
-            // NORMAL VIEWPORT FOR USER INTERACTION
-            await this.page.setViewport({ width: 1280, height: 720 });
+
+            await this.page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+
+          // PERSISTENT ADBLOCKER BYPASS (Background script)
+          await this.page.evaluateOnNewDocument(() => {
+            setInterval(() => {
+              // 1. Recursive function to find elements even in Shadow DOM
+              const findInShadows = (root, text) => {
+                // Look for common button-like elements
+                const selectors = 'a, button, div, span, [role="button"]';
+                const elements = Array.from(root.querySelectorAll(selectors));
+                for (const el of elements) {
+                  const content = (el.textContent || el.innerText || "").toLowerCase();
+                  if (content.includes(text.toLowerCase())) {
+                    // Check if it's the actual button or a wrapper (prefer smaller elements)
+                    if (el.children.length < 5) return el;
+                  }
+                }
+                // Check shadow roots
+                const all = root.querySelectorAll('*');
+                for (const el of all) {
+                  if (el.shadowRoot) {
+                    const found = findInShadows(el.shadowRoot, text);
+                    if (found) return found;
+                  }
+                }
+                return null;
+              };
+
+              const adblockBtn = findInShadows(document, 'continue with adblocker anyway') || 
+                                findInShadows(document, 'continue anyway');
+              
+              if (adblockBtn) {
+                // Ensure it's visible and not a huge container
+                adblockBtn.click();
+                adblockBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                adblockBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                adblockBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+              }
+
+              // 2. Remove common adblock elements from everywhere
+              const removeAll = (root, selector) => {
+                root.querySelectorAll(selector).forEach(el => el.remove());
+                root.querySelectorAll('*').forEach(el => {
+                  if (el.shadowRoot) removeAll(el.shadowRoot, selector);
+                });
+              };
+              ['.adblock-error', '.fc-ab-root', '.modal-backdrop', '#adblock-warning'].forEach(s => {
+                removeAll(document, s);
+              });
+
+              // 3. Unlock scrolling
+              document.body.style.setProperty('overflow', 'auto', 'important');
+              document.documentElement.style.setProperty('overflow', 'auto', 'important');
+              document.body.classList.remove('modal-open');
+            }, 1000); // Check every 1s
+          });
+
+          // Force CSS to hide adblocker elements
+          await this.page.addStyleTag({ content: `
+            .adblock-error, .fc-ab-root, .modal-backdrop, #adblock-warning { 
+              display: none !important; 
+              visibility: hidden !important; 
+              pointer-events: none !important; 
+            }
+            body { overflow: auto !important; }
+          `});
+
+            if (process.env.ATERNOS_SESSION) {
+              await this.page.setCookie({
+                name: 'ATERNOS_SESSION',
+                value: process.env.ATERNOS_SESSION,
+                domain: '.aternos.org',
+                path: '/',
+                secure: true,
+                httpOnly: true
+              });
+            }
+
+            this.isInitialized = true;
+            this.initializing = null;
+            this.addLog("Browser monitor started (Screencast Mode)");
+          } catch (err) {
+            if (err.message.includes("already running") && retryCount < 5) {
+              this.addLog(`[AternosBrowser] Profile locked, retrying... (Attempt ${retryCount + 1})`);
+              await new Promise(r => setTimeout(r, 3000));
+              return launch(retryCount + 1);
+            }
+            throw err;
           }
+        };
 
-          await this.page.setUserAgent(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-          );
-
-          // Inject session cookie if available in env
-          if (process.env.ATERNOS_SESSION) {
-            await this.page.setCookie({
-              name: 'ATERNOS_SESSION',
-              value: process.env.ATERNOS_SESSION,
-              domain: '.aternos.org',
-              path: '/',
-              secure: true,
-              httpOnly: true
-            });
-          }
-
-          this.isInitialized = true;
-          this.initializing = null;
-          this.addLog("Browser monitor started (Low Memory Mode)");
-        } catch (err) {
-          if (err.message.includes("already running") && retryCount < 5) {
-            this.addLog(`[AternosBrowser] Profile locked, retrying in 3s... (Attempt ${retryCount + 1})`);
-            await new Promise(r => setTimeout(r, 3000));
-            return launch(retryCount + 1);
-          }
-          
-          this.initializing = null;
-          this.addLog(`[AternosBrowser] Failed to launch browser: ${err.message}`);
-          throw err;
-        }
-      };
-
-      await launch();
+        await launch();
+      } catch (err) {
+        this.addLog(`[AternosBrowser] FATAL ERROR: ${err.message}`);
+        this.isInitialized = false;
+        this.initializing = null;
+      }
     })();
 
     return this.initializing;
@@ -230,17 +309,75 @@ class AternosBrowser {
         return { class: "unknown", label: "Please Log In", error: null };
       }
 
+      // ROBUST ADBLOCKER & POPUP CLEANER (Run again just before scraping)
+      await this.page.evaluate(() => {
+        const findInShadows = (root, text) => {
+          if (!root) return null;
+          const buttons = Array.from(root.querySelectorAll('a, button, div, span, .btn, [role="button"]'));
+          for (const el of buttons) {
+            if ((el.textContent || el.innerText || "").toLowerCase().includes(text.toLowerCase())) return el;
+          }
+          const all = root.querySelectorAll('*');
+          for (const el of all) {
+            if (el.shadowRoot) {
+              const found = findInShadows(el.shadowRoot, text);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+
+        const adblockBtn = findInShadows(document, 'continue with adblocker anyway') || findInShadows(document, 'continue anyway');
+        if (adblockBtn) {
+          adblockBtn.click();
+          adblockBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        }
+
+        const removeAll = (root, selector) => {
+          if (!root) return;
+          root.querySelectorAll(selector).forEach(el => el.remove());
+          root.querySelectorAll('*').forEach(el => {
+            if (el.shadowRoot) removeAll(el.shadowRoot, selector);
+          });
+        };
+
+        // Remove blocking overlays and Google-related iframes/ins
+        ['.adblock-error', '.fc-ab-root', '.modal-backdrop', '#adblock-warning', 'iframe[src*="google"]', 'ins.adsbygoogle'].forEach(s => removeAll(document, s));
+        
+        // Force unlock scrolling on body and html
+        [document.body, document.documentElement].forEach(el => {
+          if (el) {
+            el.style.setProperty('overflow', 'auto', 'important');
+            el.style.setProperty('position', 'static', 'important');
+          }
+        });
+        document.body.classList.remove('modal-open');
+      });
+
       const currentUrl = this.page.url();
       
       // If we are on the 'go' page or 'servers' selection page, try to go to the server page
       if (currentUrl.includes("/go/") || currentUrl.includes("/servers/")) {
-        this.addLog("[AternosBrowser] On selection page, navigating to server...");
-        await this.page.goto(this.serverPage, { waitUntil: "domcontentloaded" });
-        await new Promise(r => setTimeout(r, 2000));
+        this.addLog("[AternosBrowser] On selection page, selecting first server...");
+        
+        // Try to click the first server body if present
+        const clicked = await this.page.evaluate(() => {
+          const card = document.querySelector('.server-body, .server-name');
+          if (card) {
+            card.click();
+            return true;
+          }
+          return false;
+        });
+
+        if (!clicked) {
+          await this.page.goto(this.serverPage, { waitUntil: "domcontentloaded", timeout: 60000 });
+        }
+        await new Promise(r => setTimeout(r, 5000));
       } else if (!currentUrl.includes("/server/")) {
         // If we are logged in but elsewhere, just try to go to the server page
-        await this.page.goto(this.serverPage, { waitUntil: "domcontentloaded" });
-        await new Promise(r => setTimeout(r, 2000));
+        await this.page.goto(this.serverPage, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await new Promise(r => setTimeout(r, 5000)); // Wait longer
       }
 
       // Scrape status directly from the DOM (more reliable than fetch which can get 503)
@@ -285,11 +422,63 @@ class AternosBrowser {
 
       return status;
     } catch (err) {
-      if (err.message.includes("detached") || err.message.includes("closed")) {
-        this.isInitialized = false; // Force re-init on next call
+      if (err.message.includes("detached") || err.message.includes("closed") || err.message.includes("unresponsive")) {
+        this.addLog(`[AternosBrowser] Page detached or closed, resetting...`);
+        this.isInitialized = false;
+        this.initializing = null;
       }
-      this.addLog(`[AternosBrowser] Error getting status: ${err.message}`);
+      return { error: err.message };
+    }
+  }
+
+  async getScreenshot() {
+    try {
+      await this.init();
+      return this.latestFrame;
+    } catch (e) {
       return null;
+    }
+  }
+
+  async click(x, y) {
+    try {
+      await this.init();
+      await this.page.mouse.click(x, y);
+      return true;
+    } catch (err) {
+      if (err.message.includes("detached") || err.message.includes("closed")) {
+        this.isInitialized = false;
+        this.initializing = null;
+      }
+      return false;
+    }
+  }
+
+  async type(text) {
+    try {
+      await this.init();
+      await this.page.keyboard.type(text);
+      return true;
+    } catch (err) {
+      if (err.message.includes("detached") || err.message.includes("closed")) {
+        this.isInitialized = false;
+        this.initializing = null;
+      }
+      return false;
+    }
+  }
+
+  async navigate(url) {
+    try {
+      await this.init();
+      await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      return true;
+    } catch (err) {
+      if (err.message.includes("detached") || err.message.includes("closed")) {
+        this.isInitialized = false;
+        this.initializing = null;
+      }
+      return false;
     }
   }
 
@@ -398,48 +587,6 @@ class AternosBrowser {
       };
     } catch (err) {
       return null;
-    }
-  }
-
-  async getScreenshot() {
-    await this.init();
-    try {
-      return await this.page.screenshot({
-        type: 'webp',
-        quality: 50,
-      });
-    } catch (err) {
-      return null;
-    }
-  }
-
-  async click(x, y) {
-    await this.init();
-    try {
-      await this.page.mouse.click(x, y);
-      return true;
-    } catch (err) {
-      return false;
-    }
-  }
-
-  async type(text) {
-    await this.init();
-    try {
-      await this.page.keyboard.type(text);
-      return true;
-    } catch (err) {
-      return false;
-    }
-  }
-
-  async navigate(url) {
-    await this.init();
-    try {
-      await this.page.goto(url, { waitUntil: 'domcontentloaded' });
-      return true;
-    } catch (err) {
-      return false;
     }
   }
 

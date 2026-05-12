@@ -111,7 +111,11 @@ class AternosController {
   }
 
   async tick(reason) {
-    // MEMORY OPTIMIZATION: If the Minecraft bot is actively connected to the server,
+    if (this.isTicking) return;
+    this.isTicking = true;
+
+    try {
+      // MEMORY OPTIMIZATION: If the Minecraft bot is actively connected to the server,
     // AND we already confirmed the server is fully "online", we can skip waking up Puppeteer!
     const state = this.getBotState ? this.getBotState() : null;
     if (state && state.connected && reason === "poll" && this.lastStatus && this.lastStatus.class === "online") {
@@ -169,7 +173,10 @@ class AternosController {
 
     // Default: if it's some other state like 'stopping', 'loading', etc.
     this.disconnectMinecraftBot(`Aternos server is ${statusClass}`);
+  } finally {
+    this.isTicking = false;
   }
+}
 
   async startServer(reason) {
     const now = Date.now();
