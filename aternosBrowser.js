@@ -90,15 +90,15 @@ class AternosBrowser {
           }
 
           if (this.headless) {
-            // MINIMIZE VIEWPORT TO SAVE RAM
-            await this.page.setViewport({ width: 10, height: 10 });
+            // Use standard viewport so remote dashboard works
+            await this.page.setViewport({ width: 1280, height: 720 });
             await this.page.setCacheEnabled(false);
 
-            // BLOCK IMAGES BUT ALLOW CSS FOR STABILITY
+            // Block only heavy media, but allow images for login/captcha visibility
             await this.page.setRequestInterception(true);
             this.page.on('request', (req) => {
               const type = req.resourceType();
-              if (['image', 'font', 'media'].includes(type)) {
+              if (['font', 'media'].includes(type)) {
                 req.abort();
               } else {
                 req.continue();
