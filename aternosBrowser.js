@@ -121,7 +121,7 @@ class AternosBrowser {
             
             // START SCREENCAST: This is much more efficient than taking screenshots.
             const client = await this.page.target().createCDPSession();
-            await client.send('Page.startScreencast', { format: 'webp', quality: 40, maxWidth: 1280, maxHeight: 720 });
+            await client.send('Page.startScreencast', { format: 'webp', quality: 25, maxWidth: 800, maxHeight: 450 });
             client.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
               this.latestFrame = Buffer.from(data, 'base64');
               client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
@@ -222,6 +222,7 @@ class AternosBrowser {
 
             this.isInitialized = true;
             this.initializing = null;
+            this.launchTime = Date.now();
             this.addLog("Browser monitor started (Screencast Mode)");
           } catch (err) {
             if (err.message.includes("already running") && retryCount < 5) {
@@ -294,6 +295,12 @@ class AternosBrowser {
   }
 
   async getStatus() {
+    // MEMORY OPTIMIZATION: Recycle browser every 15 minutes to clear ad-related memory leaks
+    if (this.isInitialized && this.launchTime && (Date.now() - this.launchTime > 15 * 60 * 1000)) {
+      this.addLog("[AternosBrowser] Recycling browser to clear memory leaks...");
+      await this.close();
+    }
+    
     await this.init();
     try {
       // Check if the user is currently on the login page by looking for the login form
@@ -380,55 +387,55 @@ class AternosBrowser {
         await new Promise(r => setTimeout(r, 5000)); // Wait longer
       }
 
-      // Scrape status directly from the DOM (more reliable than fetch which can get 503)
-      const status = await this.page.evaluate(() => {
-        try {
-          const labelElement = document.querySelector(".statuslabel-label");
-          if (!labelElement) return { error: "Status element not found" };
+        // Scrape status directly from the DOM (more reliable than fetch which can get 503)
+        const status = await this.page.evaluate(() => {
+          try {
+            const labelElement = document.querySelector(".statuslabel-label");
+            if (!labelElement) return { error: "Status element not found" };
 
-          const label = labelElement.innerText.trim();
-          let statusClass = "unknown";
-          
-          const lowerLabel = label.toLowerCase();
-          if (lowerLabel.includes("offline")) statusClass = "offline";
-          else if (lowerLabel.includes("online")) statusClass = "online";
-          else if (lowerLabel.includes("starting") || lowerLabel.includes("loading")) statusClass = "starting";
-          else if (lowerLabel.includes("queue") || lowerLabel.includes("waiting")) statusClass = "queue";
-          else if (lowerLabel.includes("stopping") || lowerLabel.includes("saving")) statusClass = "stopping";
-          else if (lowerLabel.includes("crashed")) statusClass = "offline";
+            const label = labelElement.innerText.trim();
+            let statusClass = "unknown";
+            
+            const lowerLabel = label.toLowerCase();
+            if (lowerLabel.includes("offline")) statusClass = "offline";
+            else if (lowerLabel.includes("online")) statusClass = "online";
+            else if (lowerLabel.includes("starting") || lowerLabel.includes("loading")) statusClass = "starting";
+            else if (lowerLabel.includes("queue") || lowerLabel.includes("waiting")) statusClass = "queue";
+            else if (lowerLabel.includes("stopping") || lowerLabel.includes("saving")) statusClass = "stopping";
+            else if (lowerLabel.includes("crashed")) statusClass = "offline";
 
-          // Try to find countdown
-          let countdown = null;
-          const countdownElement = document.querySelector(".statuslabel-time");
-          if (countdownElement) {
-            const timeMatch = countdownElement.innerText.match(/(\d+)/);
-            if (timeMatch) countdown = parseInt(timeMatch[1]);
+            // Try to find countdown
+            let countdown = null;
+            const countdownElement = document.querySelector(".statuslabel-time");
+            if (countdownElement) {
+              const timeMatch = countdownElement.innerText.match(/(\d+)/);
+              if (timeMatch) countdown = parseInt(timeMatch[1]);
+            }
+
+            return {
+              class: statusClass,
+              label: label,
+              countdown: countdown
+            };
+          } catch (e) {
+            return { error: e.message };
           }
+        });
 
-          return {
-            class: statusClass,
-            label: label,
-            countdown: countdown
-          };
-        } catch (e) {
-          return { error: e.message };
+        // If we are in queue, immediately try to confirm without waiting
+        if (status && status.class === "queue") {
+          this.confirmQueue();
         }
-      });
 
-      // If we are in queue, immediately try to confirm without waiting
-      if (status && status.class === "queue") {
-        this.confirmQueue();
+        return status;
+      } catch (err) {
+        if (err.message.includes("detached") || err.message.includes("closed") || err.message.includes("unresponsive") || err.message.includes("destroyed")) {
+          this.addLog(`[AternosBrowser] Page state lost, resetting...`);
+          this.isInitialized = false;
+          this.initializing = null;
+        }
+        return { error: err.message };
       }
-
-      return status;
-    } catch (err) {
-      if (err.message.includes("detached") || err.message.includes("closed") || err.message.includes("unresponsive")) {
-        this.addLog(`[AternosBrowser] Page detached or closed, resetting...`);
-        this.isInitialized = false;
-        this.initializing = null;
-      }
-      return { error: err.message };
-    }
   }
 
   async getScreenshot() {

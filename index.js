@@ -3,6 +3,12 @@
 // Load .env FIRST so ATERNOS_SESSION / ATERNOS_AJAX_TOKEN env vars are available
 require("dotenv").config();
 
+// Prevent fatal crashes from Puppeteer race conditions (Detached Frames, etc.)
+process.on('unhandledRejection', (reason, promise) => {
+  const { addLog } = require("./logger");
+  addLog(`[FATAL] Unhandled Rejection: ${reason}`);
+});
+
 
 const { addLog, getLogs } = require("./logger");
 const mineflayer = require("mineflayer");
