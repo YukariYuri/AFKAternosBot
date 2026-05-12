@@ -729,10 +729,10 @@ class AternosBrowser {
           }
         });
 
-        // If we are in queue, immediately try to confirm without waiting
-        if (status && status.class === "queue") {
-          this.confirmQueue();
-        }
+      // If we are in queue, immediately try to confirm without waiting
+      if (status && status.class === "queue") {
+          await this.confirmQueue();
+      }
 
         return status;
       } catch (err) {

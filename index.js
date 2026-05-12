@@ -3,8 +3,22 @@
 // Load .env FIRST so ATERNOS_SESSION / ATERNOS_AJAX_TOKEN env vars are available
 require("dotenv").config();
 
+function isDetachedFrameError(reason) {
+  const msg = String(reason && reason.message ? reason.message : reason);
+  return (
+    msg.includes("Attempted to use detached Frame") ||
+    msg.includes("Execution context was destroyed") ||
+    msg.includes("Cannot find context with specified id") ||
+    msg.includes("Target closed") ||
+    msg.includes("Page crashed")
+  );
+}
+
 // Prevent fatal crashes from Puppeteer race conditions (Detached Frames, etc.)
 process.on('unhandledRejection', (reason, promise) => {
+  if (isDetachedFrameError(reason)) {
+    return;
+  }
   const { addLog } = require("./logger");
   addLog(`[FATAL] Unhandled Rejection: ${reason}`);
 });
@@ -588,6 +602,7 @@ let activeIntervals = [];
 let reconnectTimeoutId = null;
 let connectionTimeoutId = null;
 let isReconnecting = false;
+let forceAutoDetectVersion = false;
 let aternosController = null;
 
 function clearBotTimeouts() {
@@ -716,10 +731,13 @@ function createBot() {
   try {
     // FIX: use version:false to auto-detect server version so the bot can join any server.
     // If the user explicitly sets a version in settings.json it is still respected.
-    const botVersion =
-      config.server.version && config.server.version.trim() !== ""
-        ? config.server.version
-        : false;
+    let botVersion = false;
+    if (!forceAutoDetectVersion && config.server.version && config.server.version.trim() !== "") {
+      botVersion = config.server.version;
+    }
+    if (forceAutoDetectVersion) {
+      addLog("[Bot] Using auto-detected version fallback.");
+    }
     bot = mineflayer.createBot({
       username: config["bot-account"].username,
       password: config["bot-account"].password || undefined,
@@ -750,6 +768,10 @@ function createBot() {
     connectionTimeoutId = setTimeout(() => {
       if (botRunning && !botState.connected) {
         addLog("[Bot] Connection timeout - no spawn received");
+        if (!forceAutoDetectVersion && config.server.version && config.server.version.trim() !== "") {
+          forceAutoDetectVersion = true;
+          addLog("[Bot] No spawn received - retrying with auto-detect version.");
+        }
         try {
           bot.removeAllListeners();
           bot.end();
@@ -774,6 +796,7 @@ function createBot() {
       botState.lastPacket = Date.now();
       botState.reconnectAttempts = 0;
       isReconnecting = false;
+      forceAutoDetectVersion = false;
 
       addLog(
         `[Bot] [+] Successfully spawned on server! (Version: ${bot.version})`,
@@ -835,6 +858,15 @@ function createBot() {
 
       const reasonStr = String(kickReason).toLowerCase();
       if (
+        reasonStr.includes("version") ||
+        reasonStr.includes("incompatible") ||
+        reasonStr.includes("outdated") ||
+        reasonStr.includes("unsupported")
+      ) {
+        forceAutoDetectVersion = true;
+        addLog("[Bot] Version mismatch suspected - auto-detect fallback armed.");
+      }
+      if (
         reasonStr.includes("throttl") ||
         reasonStr.includes("wait before reconnect") ||
         reasonStr.includes("too fast")
@@ -881,10 +913,30 @@ function createBot() {
       const msg = err.message || "";
       addLog(`[Bot] Error: ${msg}`);
       botState.errors.push({ type: "error", message: msg, time: Date.now() });
+      const lower = msg.toLowerCase();
+      if (
+        lower.includes("version") ||
+        lower.includes("incompatible") ||
+        lower.includes("outdated") ||
+        lower.includes("unsupported")
+      ) {
+        forceAutoDetectVersion = true;
+        addLog("[Bot] Version error detected - auto-detect fallback armed.");
+      }
       // Don't reconnect on error - let 'end' event handle it
     });
   } catch (err) {
     addLog(`[Bot] Failed to create bot: ${err.message}`);
+    const msg = String(err.message || err).toLowerCase();
+    if (
+      msg.includes("version") ||
+      msg.includes("incompatible") ||
+      msg.includes("outdated") ||
+      msg.includes("unsupported")
+    ) {
+      forceAutoDetectVersion = true;
+      addLog("[Bot] Creation failed due to version mismatch - fallback armed.");
+    }
     scheduleReconnect();
   }
 }
@@ -1595,6 +1647,10 @@ process.on("uncaughtException", (err) => {
 
 process.on("unhandledRejection", (reason) => {
   const msg = String(reason);
+  if (isDetachedFrameError(reason)) {
+    addLog("[FATAL] Detached frame rejection ignored.");
+    return;
+  }
   addLog(`[FATAL] Unhandled Rejection: ${reason}`);
   botState.errors.push({ type: "rejection", message: msg, time: Date.now() });
   if (botState.errors.length > 100) {
