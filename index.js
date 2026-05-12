@@ -125,6 +125,29 @@ function getTemplate(name) {
     .replace(/{{SERVER_PORT}}/g, config.server.port);
 }
 
+function updateEnvValues(values) {
+  const envPath = "./.env";
+  let envContent = "";
+
+  if (fs.existsSync(envPath)) {
+    envContent = fs.readFileSync(envPath, "utf8");
+  }
+
+  Object.entries(values).forEach(([key, value]) => {
+    if (!value) return;
+    const envValue = JSON.stringify(String(value));
+    const regex = new RegExp(`^${key}=.*`, "m");
+    if (regex.test(envContent)) {
+      envContent = envContent.replace(regex, `${key}=${envValue}`);
+    } else {
+      envContent += `${envContent.endsWith("\n") || envContent.length === 0 ? "" : "\n"}${key}=${envValue}`;
+    }
+    process.env[key] = value;
+  });
+
+  fs.writeFileSync(envPath, envContent.trim() + "\n");
+}
+
 // Web Endpoints
 app.get('/', (req, res) => res.send(getTemplate("dashboard.html")));
 app.get('/tutorial', (req, res) => res.send(getTemplate("tutorial.html")));
@@ -172,12 +195,97 @@ app.post("/aternos/session", async (req, res) => {
   if (!session) return res.status(400).json({ success: false, error: "No session provided" });
   
   try {
-    process.env.ATERNOS_SESSION = session;
+    updateEnvValues({ ATERNOS_SESSION: session });
     if (aternosController && aternosController.browser) {
       await aternosController.browser.close(); // Restart browser with new cookie
     }
     addLog(`[Aternos] Session updated manually via dashboard.`);
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/aternos/login", async (req, res) => {
+  const { username, password, remember } = req.body || {};
+  if (!username || !password) {
+    return res.status(400).json({ success: false, error: "Username and password are required." });
+  }
+
+  if (!aternosController || !aternosController.browser) {
+    return res.status(404).json({ success: false, error: "Aternos browser is not active." });
+  }
+
+  try {
+    const result = await aternosController.browser.loginWithCredentials(username, password);
+    if (!result.success) {
+      return res.status(401).json(result);
+    }
+
+    const tokens = await aternosController.syncTokens();
+    if (!tokens || !tokens.session) {
+      return res.status(401).json({ success: false, error: "Login did not produce an Aternos session cookie." });
+    }
+
+    if (remember) {
+      updateEnvValues({
+        ATERNOS_USER: String(username).trim(),
+        ATERNOS_PASS: String(password),
+      });
+    }
+
+    addLog("[Aternos] Dashboard login completed.");
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/aternos/google/start", async (req, res) => {
+  if (!aternosController || !aternosController.browser) {
+    return res.status(404).json({ success: false, error: "Aternos browser is not active." });
+  }
+
+  try {
+    const result = await aternosController.browser.startGoogleLogin();
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    addLog("[Aternos] Google login started from dashboard.");
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/aternos/google/status", async (req, res) => {
+  if (!aternosController || !aternosController.browser) {
+    return res.status(404).json({ success: false, error: "Aternos browser is not active." });
+  }
+
+  try {
+    const state = await aternosController.browser.isLoggedIn();
+    if (!state.loggedIn) {
+      return res.json({
+        success: false,
+        pending: true,
+        url: state.url,
+        error: state.error || null,
+      });
+    }
+
+    const tokens = await aternosController.syncTokens();
+    if (!tokens || !tokens.session) {
+      return res.status(401).json({ success: false, error: "Google login did not produce an Aternos session cookie." });
+    }
+
+    if (aternosController.config && aternosController.config.headless !== false) {
+      await aternosController.browser.setHeadless(aternosController.config.headless);
+    }
+
+    addLog("[Aternos] Google login completed and session saved.");
+    res.json({ success: true, url: state.url });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

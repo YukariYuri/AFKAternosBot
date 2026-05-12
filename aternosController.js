@@ -212,7 +212,7 @@ class AternosController {
 
   async syncTokens() {
     const tokens = await this.browser.getTokens();
-    if (!tokens || !tokens.session) return;
+    if (!tokens || !tokens.session) return tokens;
 
     const fs = require("fs");
     const path = require("path");
@@ -239,6 +239,7 @@ class AternosController {
 
     fs.writeFileSync(envPath, envContent.trim() + "\n");
     this.addLog("[Aternos] .env tokens updated automatically.");
+    return tokens;
   }
 
   handleError(err) {
@@ -248,4 +249,3 @@ class AternosController {
 }
 
 module.exports = AternosController;
-

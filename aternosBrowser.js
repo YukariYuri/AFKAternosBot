@@ -294,6 +294,199 @@ class AternosBrowser {
     }
   }
 
+  async loginWithCredentials(username, password) {
+    await this.init();
+
+    const user = String(username || "").trim();
+    const pass = String(password || "");
+    if (!user || !pass) {
+      return { success: false, error: "Username and password are required." };
+    }
+
+    this.addLog("[AternosBrowser] Logging in from dashboard credentials...");
+
+    try {
+      await this.page.goto("https://aternos.org/go/", { waitUntil: "domcontentloaded", timeout: 60000 });
+      await this.page.waitForSelector('input[name="user"], #user', { visible: true, timeout: 30000 });
+
+      const userSelector = await this.page.$('input[name="user"]') ? 'input[name="user"]' : '#user';
+      const passwordSelector = await this.page.$('input[name="password"]') ? 'input[name="password"]' : '#password';
+
+      await this.page.click(userSelector, { clickCount: 3 });
+      await this.page.type(userSelector, user, { delay: 20 });
+      await this.page.click(passwordSelector, { clickCount: 3 });
+      await this.page.type(passwordSelector, pass, { delay: 20 });
+
+      const clicked = await this.page.evaluate(() => {
+        const candidates = [
+          document.querySelector("#login"),
+          document.querySelector('button[type="submit"]'),
+          document.querySelector('input[type="submit"]'),
+        ].filter(Boolean);
+
+        const button = candidates.find((el) => el.offsetParent !== null) || candidates[0];
+        if (!button) return false;
+        button.click();
+        return true;
+      });
+
+      if (!clicked) {
+        await this.page.keyboard.press("Enter");
+      }
+
+      await new Promise(r => setTimeout(r, 5000));
+
+      const result = await this.page.evaluate(() => {
+        const loginField = document.querySelector('input[name="user"], #user');
+        const pageText = (document.body.innerText || "").toLowerCase();
+        const href = location.href;
+
+        if (href.includes("/server/") || href.includes("/servers/")) {
+          return { success: true };
+        }
+
+        if (loginField && (pageText.includes("captcha") || pageText.includes("verification"))) {
+          return { success: false, manualRequired: true, error: "Aternos requires captcha or extra verification." };
+        }
+
+        if (loginField) {
+          return { success: false, error: "Login failed. Please check username/password." };
+        }
+
+        return { success: true };
+      });
+
+      if (!result.success) {
+        this.addLog(`[AternosBrowser] Dashboard login failed: ${result.error}`);
+        return result;
+      }
+
+      if (!this.page.url().includes("/server/")) {
+        await this.page.goto(this.serverPage, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await new Promise(r => setTimeout(r, 2000));
+      }
+
+      this.addLog("[AternosBrowser] Logged in successfully from dashboard.");
+      return { success: true };
+    } catch (err) {
+      this.addLog(`[AternosBrowser] Dashboard login error: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
+  async setHeadless(headless) {
+    const nextHeadless = headless !== false;
+    if (this.headless === nextHeadless) return;
+
+    this.headless = nextHeadless;
+    await this.close();
+  }
+
+  async startGoogleLogin() {
+    if (this.headless) {
+      this.addLog("[AternosBrowser] Opening visible browser for Google login...");
+      await this.setHeadless(false);
+    }
+
+    await this.init();
+
+    try {
+      await this.page.bringToFront();
+      await this.page.goto("https://aternos.org/go/", { waitUntil: "domcontentloaded", timeout: 60000 });
+      await new Promise(r => setTimeout(r, 1500));
+
+      const browser = this.browser;
+      const newPagePromise = new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(null), 5000);
+        browser.once("targetcreated", async (target) => {
+          try {
+            const page = await target.page();
+            clearTimeout(timeout);
+            resolve(page || null);
+          } catch (e) {
+            clearTimeout(timeout);
+            resolve(null);
+          }
+        });
+      });
+
+      const clicked = await this.page.evaluate(() => {
+        const isVisible = (el) => {
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+
+        const candidates = Array.from(document.querySelectorAll("a, button, div, span, [role='button']"));
+        const googleButton = candidates.find((el) => {
+          const text = (el.textContent || el.innerText || "").toLowerCase();
+          const href = (el.getAttribute("href") || "").toLowerCase();
+          const cls = (el.className || "").toString().toLowerCase();
+          return isVisible(el) && (text.includes("google") || href.includes("google") || cls.includes("google"));
+        });
+
+        if (!googleButton) return false;
+
+        const clickable = googleButton.closest("a, button, [role='button']") || googleButton;
+        clickable.click();
+        return true;
+      });
+
+      if (!clicked) {
+        return { success: false, error: "Google sign-in button was not found on Aternos login page." };
+      }
+
+      const newPage = await newPagePromise;
+      if (newPage) {
+        this.page = newPage;
+        await this.page.setViewport({ width: 1280, height: 720 });
+        await this.page.bringToFront();
+      }
+
+      this.addLog("[AternosBrowser] Google login started. Complete it in the visible browser window.");
+      return {
+        success: true,
+        url: this.page.url(),
+        message: "Complete Google sign-in in the opened Chromium window.",
+      };
+    } catch (err) {
+      this.addLog(`[AternosBrowser] Google login start error: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
+  async isLoggedIn() {
+    await this.init();
+
+    try {
+      const pages = await this.browser.pages();
+      const usablePages = pages.filter((page) => !page.isClosed());
+
+      for (const page of usablePages) {
+        const url = page.url();
+        if (url.includes("aternos.org")) {
+          this.page = page;
+          break;
+        }
+      }
+
+      const cookies = await this.page.cookies("https://aternos.org");
+      const hasSession = cookies.some((cookie) => cookie.name === "ATERNOS_SESSION" && cookie.value);
+
+      if (!hasSession) {
+        return { loggedIn: false, url: this.page.url() };
+      }
+
+      if (!this.page.url().includes("/server/")) {
+        await this.page.goto(this.serverPage, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await new Promise(r => setTimeout(r, 2000));
+      }
+
+      return { loggedIn: true, url: this.page.url() };
+    } catch (err) {
+      return { loggedIn: false, error: err.message };
+    }
+  }
+
   async getStatus() {
     // MEMORY OPTIMIZATION: Recycle browser every 15 minutes to clear ad-related memory leaks
     if (this.isInitialized && this.launchTime && (Date.now() - this.launchTime > 15 * 60 * 1000)) {

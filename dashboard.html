@@ -284,13 +284,21 @@
         </div>
 
         <section class="status-section" style="margin-top: 24px; flex-direction: column; align-items: flex-start; gap: 12px; background: rgba(255,255,255,0.03);">
-          <div style="font-size: 14px; font-weight: 700; color: var(--accent);">Quick Session Login</div>
-          <p class="stat-detail" style="margin: 0;">Paste <code>ATERNOS_SESSION</code> cookie value below:</p>
-          <div style="display: flex; width: 100%; gap: 8px;">
-            <input type="password" id="session-input" placeholder="Value here..." style="flex: 1; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; color: #fff; font-size: 12px;">
-            <button onclick="saveSession()" style="flex: 0 0 auto; padding: 6px 12px; font-size: 12px; background: var(--accent); border-radius: 6px;">Login</button>
-          </div>
-          <p class="stat-detail" style="font-size: 10px;">Get this from browser DevTools -> Application -> Cookies</p>
+          <div style="font-size: 14px; font-weight: 700; color: var(--accent);">Aternos Login</div>
+          <p class="stat-detail" style="margin: 0;">Login directly from this dashboard. The bot will save the Aternos session after login.</p>
+          <form id="aternos-login-form" style="display: grid; width: 100%; gap: 8px;">
+            <input type="text" id="aternos-user-input" autocomplete="username" placeholder="Aternos username or email" style="background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: #fff; font-size: 12px;">
+            <input type="password" id="aternos-pass-input" autocomplete="current-password" placeholder="Aternos password" style="background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: #fff; font-size: 12px;">
+            <label style="display: flex; align-items: center; gap: 8px; color: #8b949e; font-size: 11px;">
+              <input type="checkbox" id="aternos-remember-input" style="margin: 0;">
+              Save username/password to .env for automatic login
+            </label>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <button id="aternos-login-btn" type="submit" style="flex: 0 0 auto; padding: 7px 14px; font-size: 12px; background: var(--accent); border-radius: 6px;">Login Aternos</button>
+              <button id="aternos-google-btn" type="button" style="flex: 0 0 auto; padding: 7px 14px; font-size: 12px; background: #fff; color: #24292f; border-radius: 6px;">Sign in with Google</button>
+              <span id="aternos-login-status" class="stat-detail" style="font-size: 11px; margin: 0;"></span>
+            </div>
+          </form>
         </section>
 
         <footer>
@@ -347,6 +355,7 @@
         <p class="stat-detail" style="padding: 8px 15px; margin: 0; font-size: 10px; color: #8b949e; background: #0d1117;">
           💡 <b>Interactive Mode:</b> Click anywhere to simulate touch. Use <b>Send Key</b> for typing. Adblock warnings are auto-clicked every 10s.
         </p>
+        <p id="browser-status" class="stat-detail" style="padding: 0 15px 10px; margin: 0; font-size: 10px; color: #8b949e; background: #0d1117;"></p>
       </div>
     </div>
 
@@ -469,6 +478,116 @@
         const r = await fetch('/stop', { method: 'POST' });
         const data = await r.json();
         update();
+      }
+
+      const aternosLoginForm = document.getElementById('aternos-login-form');
+      if (aternosLoginForm) {
+        let googleLoginTimer = null;
+        const googleLoginButton = document.getElementById('aternos-google-btn');
+
+        aternosLoginForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+
+          const usernameInput = document.getElementById('aternos-user-input');
+          const passwordInput = document.getElementById('aternos-pass-input');
+          const rememberInput = document.getElementById('aternos-remember-input');
+          const button = document.getElementById('aternos-login-btn');
+          const status = document.getElementById('aternos-login-status');
+
+          const username = usernameInput.value.trim();
+          const password = passwordInput.value;
+          if (!username || !password) {
+            status.textContent = 'Enter username and password.';
+            return;
+          }
+
+          button.disabled = true;
+          status.textContent = 'Logging in...';
+
+          try {
+            const r = await fetch('/aternos/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                username,
+                password,
+                remember: rememberInput.checked
+              })
+            });
+
+            const data = await r.json();
+            if (!data.success) {
+              status.textContent = data.error || 'Login failed.';
+              return;
+            }
+
+            passwordInput.value = '';
+            status.textContent = 'Logged in. Session saved.';
+            setTimeout(refreshBrowser, 2000);
+            update();
+          } catch (err) {
+            status.textContent = 'Login request failed.';
+          } finally {
+            button.disabled = false;
+          }
+        });
+
+        if (googleLoginButton) {
+          googleLoginButton.addEventListener('click', async () => {
+            const status = document.getElementById('aternos-login-status');
+            googleLoginButton.disabled = true;
+            status.textContent = 'Opening Google sign-in...';
+
+            if (googleLoginTimer) {
+              clearInterval(googleLoginTimer);
+              googleLoginTimer = null;
+            }
+
+            try {
+              const r = await fetch('/aternos/google/start', { method: 'POST' });
+              const data = await r.json();
+              if (!data.success) {
+                status.textContent = data.error || 'Google sign-in failed to start.';
+                googleLoginButton.disabled = false;
+                return;
+              }
+
+              status.textContent = 'Complete Google sign-in in the Chromium window.';
+
+              googleLoginTimer = setInterval(async () => {
+                try {
+                  const statusResponse = await fetch('/aternos/google/status');
+                  const state = await statusResponse.json();
+
+                  if (state.success) {
+                    clearInterval(googleLoginTimer);
+                    googleLoginTimer = null;
+                    googleLoginButton.disabled = false;
+                    status.textContent = 'Google login complete. Session saved.';
+                    setTimeout(refreshBrowser, 2000);
+                    update();
+                    return;
+                  }
+
+                  if (state.error && !state.pending) {
+                    clearInterval(googleLoginTimer);
+                    googleLoginTimer = null;
+                    googleLoginButton.disabled = false;
+                    status.textContent = state.error;
+                  }
+                } catch (err) {
+                  clearInterval(googleLoginTimer);
+                  googleLoginTimer = null;
+                  googleLoginButton.disabled = false;
+                  status.textContent = 'Google login status check failed.';
+                }
+              }, 3000);
+            } catch (err) {
+              googleLoginButton.disabled = false;
+              status.textContent = 'Google sign-in request failed.';
+            }
+          });
+        }
       }
 
       // Browser Remote Control (Advanced Mode)
