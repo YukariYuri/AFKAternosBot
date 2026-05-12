@@ -283,6 +283,16 @@
           <button id="stop-btn" onclick="stopBot()">Stop bot</button>
         </div>
 
+        <section class="status-section" style="margin-top: 24px; flex-direction: column; align-items: flex-start; gap: 12px; background: rgba(255,255,255,0.03);">
+          <div style="font-size: 14px; font-weight: 700; color: var(--accent);">Quick Session Login</div>
+          <p class="stat-detail" style="margin: 0;">Paste <code>ATERNOS_SESSION</code> cookie value below:</p>
+          <div style="display: flex; width: 100%; gap: 8px;">
+            <input type="password" id="session-input" placeholder="Value here..." style="flex: 1; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; color: #fff; font-size: 12px;">
+            <button onclick="saveSession()" style="flex: 0 0 auto; padding: 6px 12px; font-size: 12px; background: var(--accent); border-radius: 6px;">Login</button>
+          </div>
+          <p class="stat-detail" style="font-size: 10px;">Get this from browser DevTools -> Application -> Cookies</p>
+        </section>
+
         <footer>
           <p>AFK Bot &middot; <a href="#" style="color: inherit;">View setup guide</a></p>
         </footer>
@@ -300,21 +310,32 @@
 
       <div class="browser-section">
         <div class="log-header">
-          <h2>Remote Aternos Browser (Manual Login)</h2>
-          <div class="browser-status" id="browser-status">Loading screen...</div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <h2>Remote Browser</h2>
+            <div class="log-badge aternosbrowser">Manual Mode</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="browser-status" id="browser-status">Idle</div>
+            <select id="refresh-rate" style="background: rgba(1,4,9,0.5); border: 1px solid var(--border); color: #fff; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer;">
+              <option value="0">Freeze (Save RAM)</option>
+              <option value="2000" selected>Fast (2s)</option>
+              <option value="5000">Medium (5s)</option>
+              <option value="15000">Slow (15s)</option>
+            </select>
+          </div>
         </div>
         <div class="browser-container">
           <div class="browser-screen-wrapper" id="screen-wrapper">
-            <img id="browser-screen" src="" alt="Browser Screen">
+            <img id="browser-screen" src="" alt="Browser Screen" style="display: block; width: 100%; border-radius: 8px;">
           </div>
           <div class="browser-controls">
-            <input type="text" id="browser-input" placeholder="Type here and press Send / Enter to send to browser...">
-            <button class="browser-btn" onclick="sendBrowserText()">Send Text</button>
-            <button class="browser-btn" onclick="refreshBrowser()" style="background: var(--text-dim)">Refresh</button>
-            <button class="browser-btn" onclick="goToAternos()" style="background: var(--warn)">Go to Login</button>
-            <button class="browser-btn" onclick="goToAternosServer()" style="background: var(--success)">Go to Server</button>
+            <input type="text" id="browser-input" placeholder="Type here...">
+            <button class="browser-btn" onclick="sendBrowserText()">Send</button>
+            <button class="browser-btn" onclick="refreshBrowser()" style="background: var(--border)">Refresh</button>
+            <button class="browser-btn" onclick="goToAternos()" style="background: var(--warn)">Login Page</button>
+            <button class="browser-btn" onclick="goToAternosServer()" style="background: var(--success)">Server Page</button>
           </div>
-          <p class="stat-detail">Click on the screen above to perform clicks in the browser. Useful for Google Login buttons.</p>
+          <p class="stat-detail">💡 <b>Tip:</b> Click on the image above to interact. Set to <b>Freeze</b> to significantly reduce memory usage.</p>
         </div>
       </div>
     </div>
@@ -505,6 +526,28 @@
         setTimeout(refreshBrowser, 2000);
       }
 
+      async function saveSession() {
+        const input = document.getElementById('session-input');
+        const session = input.value.trim();
+        if (!session) return;
+        
+        const status = document.getElementById('browser-status');
+        status.textContent = 'Updating session...';
+        
+        const r = await fetch('/aternos/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session })
+        });
+        
+        const data = await r.json();
+        if (data.success) {
+          input.value = '';
+          status.textContent = 'Session updated! Restarting...';
+          setTimeout(refreshBrowser, 3000);
+        }
+      }
+
       async function goToAternosServer() {
         const status = document.getElementById('browser-status');
         status.textContent = 'Navigating to server page...';
@@ -516,23 +559,27 @@
         setTimeout(refreshBrowser, 2000);
       }
 
-      // IMPROVED REALTIME REFRESH
+      // IMPROVED REALTIME REFRESH with Variable Speed
       let refreshTimer = null;
-      function startRealtimeRefresh() {
-        if (refreshTimer) return;
-        const img = document.getElementById('browser-screen');
-        
-        const loadNext = () => {
+      function updateRefreshMode() {
+        if (refreshTimer) {
+          clearInterval(refreshTimer);
+          refreshTimer = null;
+        }
+
+        const rate = parseInt(document.getElementById('refresh-rate').value);
+        if (rate > 0) {
           refreshBrowser();
-          // We'll trigger the next one after a delay, but only after the previous one finished loading
-          // However, <img> doesn't have a perfect "done" for new src, so we'll just use a fast interval
-        };
-        
-        refreshTimer = setInterval(loadNext, 2000); // 2 second refresh for "realtime" feel
+          refreshTimer = setInterval(refreshBrowser, rate);
+        } else {
+          document.getElementById('browser-status').textContent = 'Frozen (Low RAM)';
+        }
       }
 
+      document.getElementById('refresh-rate').addEventListener('change', updateRefreshMode);
+
       setInterval(update, 5000);
-      startRealtimeRefresh();
+      updateRefreshMode();
       update();
     </script>
   </body>

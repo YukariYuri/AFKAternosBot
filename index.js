@@ -65,20 +65,22 @@ let botState = {
   wasThrottled: false,
 };
 
-// Track total time on server (Playtime) and memory stats
+// Sample memory every 10 seconds for average and force GC if possible
 setInterval(() => {
-  if (botState.connected) {
-    stats.totalPlaytime += 20; // Increment by 20 ticks (approx 1 second)
-    // Save to disk every 600 ticks (approx 30 seconds)
-    if (stats.totalPlaytime % 600 === 0) saveStats();
+  if (global.gc) {
+    try { global.gc(); } catch (e) {}
   }
 
-  // Sample memory every second for average
   const currentHeap = process.memoryUsage().heapUsed / 1024 / 1024;
   memoryStats.totalHeapUsed += currentHeap;
   memoryStats.samples++;
   memoryStats.avgHeapUsed = memoryStats.totalHeapUsed / memoryStats.samples;
-}, 1000);
+
+  if (botState.connected) {
+    stats.totalPlaytime += 200; // Increment by 200 ticks (approx 10 seconds)
+    if (stats.totalPlaytime % 600 === 0) saveStats();
+  }
+}, 10000); // Increased interval to 10s to reduce CPU/Memory churn
 
 // Also save stats on exit
 process.on("SIGINT", () => {
@@ -138,15 +140,40 @@ app.get("/health", (req, res) => {
 
 app.get("/ping", (req, res) => res.send("pong"));
 
-// Aternos Browser Remote Control
+// Aternos Browser Remote Control (with 1s cache to save RAM)
+let screenshotCache = { data: null, time: 0 };
 app.get("/aternos/screenshot", async (req, res) => {
   if (!aternosController || !aternosController.browser) return res.status(404).send("Browser not active");
+  
+  const now = Date.now();
+  if (screenshotCache.data && (now - screenshotCache.time < 1000)) {
+    res.setHeader('Content-Type', 'image/webp');
+    return res.send(screenshotCache.data);
+  }
+
   const screenshot = await aternosController.browser.getScreenshot();
   if (screenshot) {
+    screenshotCache = { data: screenshot, time: now };
     res.setHeader('Content-Type', 'image/webp');
     res.send(screenshot);
   } else {
     res.status(500).send("Failed to capture screenshot");
+  }
+});
+
+app.post("/aternos/session", async (req, res) => {
+  const { session } = req.body;
+  if (!session) return res.status(400).json({ success: false, error: "No session provided" });
+  
+  try {
+    process.env.ATERNOS_SESSION = session;
+    if (aternosController && aternosController.browser) {
+      await aternosController.browser.close(); // Restart browser with new cookie
+    }
+    addLog(`[Aternos] Session updated manually via dashboard.`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

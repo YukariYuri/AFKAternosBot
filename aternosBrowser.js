@@ -83,6 +83,10 @@ class AternosBrowser {
               "--disable-breakpad",
               "--disable-client-side-phishing-detection",
               "--disable-features=Translate",
+              "--js-flags=--max-old-space-size=128", // Limit V8 heap memory
+              "--disable-canvas-aa",
+              "--disable-2d-canvas-clip-aa",
+              "--disable-gl-drawing-for-tests",
               "--disable-hang-monitor",
               "--disable-ipc-flooding-protection",
               "--disable-popup-blocking",
