@@ -3,4 +3,5 @@ npm-debug.log*
 .env
 *.log
 .aternos_browser_data/
+.cache/
 
