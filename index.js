@@ -33,9 +33,8 @@ let memoryStats = {
 try {
   if (fs.existsSync("./stats.json")) {
     stats = JSON.parse(fs.readFileSync("./stats.json", "utf8"));
-    // Migration: Convert seconds to ticks if not already done
+    // Migration: Set unit to ticks if not already done
     if (!stats.unit || stats.unit !== 'ticks') {
-      stats.totalPlaytime = (stats.totalPlaytime || 0) * 20;
       stats.unit = 'ticks';
       saveStats();
     }

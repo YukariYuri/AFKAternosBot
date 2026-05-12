@@ -40,14 +40,17 @@ class AternosBrowser {
       }
 
       const launch = async (retryCount = 0) => {
-        // CLEANUP LOCK FILE (Fix for "browser is already running" error on Render)
-        const lockPath = path.join(this.userDataDir, 'SingletonLock');
-        if (fs.existsSync(lockPath)) {
-          try {
-            fs.unlinkSync(lockPath);
-            this.addLog("[AternosBrowser] Stale lock file removed.");
-          } catch (e) {
-            // If we can't delete it, it might actually be in use
+        // CLEANUP LOCK FILES (Fix for "browser is already running" error on Render/Linux)
+        const locks = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+        for (const lock of locks) {
+          const lockPath = path.join(this.userDataDir, lock);
+          if (fs.existsSync(lockPath)) {
+            try {
+              fs.unlinkSync(lockPath);
+              this.addLog(`[AternosBrowser] Stale ${lock} removed.`);
+            } catch (e) {
+              // If we can't delete it, it's likely held by a live process
+            }
           }
         }
 
