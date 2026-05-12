@@ -227,9 +227,14 @@ class AternosBrowser {
       }
 
       const currentUrl = this.page.url();
-      // Ensure we navigate to the exact server page if we are somewhere else, 
-      // but only if we are definitely logged in (which is implied if isLoginScreen is false)
-      if (!currentUrl.includes("/server/")) {
+      
+      // If we are on the 'go' page or 'servers' selection page, try to go to the server page
+      if (currentUrl.includes("/go/") || currentUrl.includes("/servers/")) {
+        this.addLog("[AternosBrowser] On selection page, navigating to server...");
+        await this.page.goto(this.serverPage, { waitUntil: "domcontentloaded" });
+        await new Promise(r => setTimeout(r, 2000));
+      } else if (!currentUrl.includes("/server/")) {
+        // If we are logged in but elsewhere, just try to go to the server page
         await this.page.goto(this.serverPage, { waitUntil: "domcontentloaded" });
         await new Promise(r => setTimeout(r, 2000));
       }
@@ -396,9 +401,8 @@ class AternosBrowser {
     await this.init();
     try {
       return await this.page.screenshot({
-        type: 'jpeg',
-        quality: 60,
-        optimizeForSpeed: true
+        type: 'webp',
+        quality: 50,
       });
     } catch (err) {
       return null;

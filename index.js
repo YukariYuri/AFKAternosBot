@@ -143,7 +143,7 @@ app.get("/aternos/screenshot", async (req, res) => {
   if (!aternosController || !aternosController.browser) return res.status(404).send("Browser not active");
   const screenshot = await aternosController.browser.getScreenshot();
   if (screenshot) {
-    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Content-Type', 'image/webp');
     res.send(screenshot);
   } else {
     res.status(500).send("Failed to capture screenshot");

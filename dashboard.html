@@ -312,6 +312,7 @@
             <button class="browser-btn" onclick="sendBrowserText()">Send Text</button>
             <button class="browser-btn" onclick="refreshBrowser()" style="background: var(--text-dim)">Refresh</button>
             <button class="browser-btn" onclick="goToAternos()" style="background: var(--warn)">Go to Login</button>
+            <button class="browser-btn" onclick="goToAternosServer()" style="background: var(--success)">Go to Server</button>
           </div>
           <p class="stat-detail">Click on the screen above to perform clicks in the browser. Useful for Google Login buttons.</p>
         </div>
@@ -495,7 +496,7 @@
 
       async function goToAternos() {
         const status = document.getElementById('browser-status');
-        status.textContent = 'Navigating to login...';
+        status.textContent = 'Navigating to login page...';
         await fetch('/aternos/navigate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -504,10 +505,35 @@
         setTimeout(refreshBrowser, 2000);
       }
 
+      async function goToAternosServer() {
+        const status = document.getElementById('browser-status');
+        status.textContent = 'Navigating to server page...';
+        await fetch('/aternos/navigate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: 'https://aternos.org/server/' })
+        });
+        setTimeout(refreshBrowser, 2000);
+      }
+
+      // IMPROVED REALTIME REFRESH
+      let refreshTimer = null;
+      function startRealtimeRefresh() {
+        if (refreshTimer) return;
+        const img = document.getElementById('browser-screen');
+        
+        const loadNext = () => {
+          refreshBrowser();
+          // We'll trigger the next one after a delay, but only after the previous one finished loading
+          // However, <img> doesn't have a perfect "done" for new src, so we'll just use a fast interval
+        };
+        
+        refreshTimer = setInterval(loadNext, 2000); // 2 second refresh for "realtime" feel
+      }
+
       setInterval(update, 5000);
-      setInterval(refreshBrowser, 10000); // Auto refresh every 10s
+      startRealtimeRefresh();
       update();
-      refreshBrowser();
     </script>
   </body>
 </html>
