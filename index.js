@@ -241,6 +241,48 @@ app.post("/aternos/login", async (req, res) => {
   }
 });
 
+app.post("/aternos/cookie", async (req, res) => {
+  const { cookieString, remember } = req.body || {};
+  if (!cookieString || !String(cookieString).trim()) {
+    return res.status(400).json({ success: false, error: "Cookie string is required." });
+  }
+
+  if (!aternosController || !aternosController.browser) {
+    return res.status(404).json({ success: false, error: "Aternos browser is not active." });
+  }
+
+  try {
+    const result = await aternosController.browser.loginWithCookieString(cookieString);
+    if (!result.success) {
+      return res.status(401).json(result);
+    }
+
+    const tokenMatch = String(cookieString).match(/(?:^|;\s*)ATERNOS_AJAX_TOKEN=([^;]+)/i);
+    const sessionMatch = String(cookieString).match(/(?:^|;\s*)ATERNOS_SESSION=([^;]+)/i);
+    const updates = {};
+    if (sessionMatch) updates.ATERNOS_SESSION = decodeURIComponent(sessionMatch[1]);
+    if (tokenMatch) updates.ATERNOS_AJAX_TOKEN = decodeURIComponent(tokenMatch[1]);
+
+    if (Object.keys(updates).length > 0) {
+      updateEnvValues(updates);
+    }
+
+    if (remember) {
+      addLog("[Aternos] Cookie login remembered in .env.");
+    }
+
+    const tokens = await aternosController.syncTokens();
+    if (!tokens || !tokens.session) {
+      return res.status(401).json({ success: false, error: "Cookie login did not produce an Aternos session cookie." });
+    }
+
+    addLog("[Aternos] Cookie login completed.");
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post("/aternos/google/start", async (req, res) => {
   if (!aternosController || !aternosController.browser) {
     return res.status(404).json({ success: false, error: "Aternos browser is not active." });

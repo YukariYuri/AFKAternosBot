@@ -299,6 +299,16 @@
               <span id="aternos-login-status" class="stat-detail" style="font-size: 11px; margin: 0;"></span>
             </div>
           </form>
+          <div style="width: 100%; display: grid; gap: 8px; margin-top: 4px;">
+            <textarea id="aternos-cookie-input" rows="3" placeholder="Paste cookie string here, for example: ATERNOS_SESSION=...; ATERNOS_AJAX_TOKEN=..." style="width: 100%; resize: vertical; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: #fff; font-size: 12px; line-height: 1.4;"></textarea>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <button id="aternos-cookie-btn" type="button" style="flex: 0 0 auto; padding: 7px 14px; font-size: 12px; background: var(--success); border-radius: 6px;">Login with Cookie</button>
+              <label style="display: flex; align-items: center; gap: 8px; color: #8b949e; font-size: 11px;">
+                <input type="checkbox" id="aternos-cookie-remember" checked style="margin: 0;">
+                Save cookie to .env
+              </label>
+            </div>
+          </div>
         </section>
 
         <footer>
@@ -484,6 +494,7 @@
       if (aternosLoginForm) {
         let googleLoginTimer = null;
         const googleLoginButton = document.getElementById('aternos-google-btn');
+        const cookieLoginButton = document.getElementById('aternos-cookie-btn');
 
         aternosLoginForm.addEventListener('submit', async (e) => {
           e.preventDefault();
@@ -585,6 +596,49 @@
             } catch (err) {
               googleLoginButton.disabled = false;
               status.textContent = 'Google sign-in request failed.';
+            }
+          });
+        }
+
+        if (cookieLoginButton) {
+          cookieLoginButton.addEventListener('click', async () => {
+            const cookieInput = document.getElementById('aternos-cookie-input');
+            const rememberInput = document.getElementById('aternos-cookie-remember');
+            const status = document.getElementById('aternos-login-status');
+
+            const cookieString = cookieInput.value.trim();
+            if (!cookieString) {
+              status.textContent = 'Paste a cookie string first.';
+              return;
+            }
+
+            cookieLoginButton.disabled = true;
+            status.textContent = 'Applying cookies...';
+
+            try {
+              const r = await fetch('/aternos/cookie', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  cookieString,
+                  remember: rememberInput.checked
+                })
+              });
+
+              const data = await r.json();
+              if (!data.success) {
+                status.textContent = data.error || 'Cookie login failed.';
+                return;
+              }
+
+              cookieInput.value = '';
+              status.textContent = 'Cookie login complete. Session saved.';
+              setTimeout(refreshBrowser, 2000);
+              update();
+            } catch (err) {
+              status.textContent = 'Cookie login request failed.';
+            } finally {
+              cookieLoginButton.disabled = false;
             }
           });
         }

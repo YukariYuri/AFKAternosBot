@@ -374,6 +374,79 @@ class AternosBrowser {
     }
   }
 
+  parseCookieString(cookieString) {
+    const pairs = String(cookieString || "")
+      .split(";")
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return pairs.map((pair) => {
+      const eqIndex = pair.indexOf("=");
+      if (eqIndex === -1) return null;
+
+      const name = pair.slice(0, eqIndex).trim();
+      const value = pair.slice(eqIndex + 1).trim();
+      if (!name || !value) return null;
+
+      return {
+        name,
+        value,
+        domain: ".aternos.org",
+        path: "/",
+        secure: true,
+        httpOnly: true,
+      };
+    }).filter(Boolean);
+  }
+
+  async loginWithCookieString(cookieString) {
+    await this.init();
+
+    const cookies = this.parseCookieString(cookieString);
+    if (!cookies.length) {
+      return { success: false, error: "No valid cookies found in the provided string." };
+    }
+
+    try {
+      const page = await this.getActivePage();
+      if (!page) {
+        return { success: false, error: "Unable to open an active browser page for cookie login." };
+      }
+
+      await page.goto(this.baseUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.setCookie(...cookies);
+      await page.goto(this.serverPage, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await new Promise((r) => setTimeout(r, 2000));
+
+      const result = await page.evaluate(() => {
+        const href = location.href;
+        const userField = document.querySelector('input[name="user"], #user');
+        const loginForm = document.querySelector('form[action*="/login/"]');
+        const bodyText = (document.body.innerText || "").toLowerCase();
+
+        if (href.includes("/server/")) return { success: true };
+        if (bodyText.includes("captcha") || bodyText.includes("verification")) {
+          return { success: false, error: "Aternos wants extra verification after cookie login." };
+        }
+        if (userField || loginForm || href.includes("/login/") || href.includes("/go/")) {
+          return { success: false, error: "Cookie login failed. The session may be invalid or expired." };
+        }
+        return { success: true };
+      });
+
+      if (!result.success) {
+        this.addLog(`[AternosBrowser] Cookie login failed: ${result.error}`);
+        return result;
+      }
+
+      this.addLog("[AternosBrowser] Cookie login succeeded.");
+      return { success: true, cookies };
+    } catch (err) {
+      this.addLog(`[AternosBrowser] Cookie login error: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
   async setHeadless(headless) {
     const nextHeadless = headless !== false;
     if (this.headless === nextHeadless) return;
