@@ -113,6 +113,18 @@ class AternosBrowser {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
           );
 
+          // Inject session cookie if available in env
+          if (process.env.ATERNOS_SESSION) {
+            await this.page.setCookie({
+              name: 'ATERNOS_SESSION',
+              value: process.env.ATERNOS_SESSION,
+              domain: '.aternos.org',
+              path: '/',
+              secure: true,
+              httpOnly: true
+            });
+          }
+
           this.isInitialized = true;
           this.initializing = null;
           this.addLog("Browser monitor started (Low Memory Mode)");
@@ -154,9 +166,30 @@ class AternosBrowser {
     });
 
     if (isLoginPage) {
-      this.addLog("[AternosBrowser] Not logged in. Please log in manually in the browser window or use credentials.");
+      this.addLog("[AternosBrowser] Not logged in. Attempting automatic login...");
+      
+      const username = process.env.ATERNOS_USER || "";
+      const password = process.env.ATERNOS_PASS || "";
+      
+      if (username && password) {
+        try {
+          await this.page.type('input[name="user"]', username);
+          await this.page.type('input[name="password"]', password);
+          await this.page.click('#login');
+          await new Promise(r => setTimeout(r, 5000));
+          
+          if (this.page.url().includes('/server/')) {
+            this.addLog("[AternosBrowser] Logged in successfully via credentials.");
+            return;
+          }
+        } catch (e) {
+          this.addLog(`[AternosBrowser] Login attempt failed: ${e.message}`);
+        }
+      }
+
+      this.addLog("[AternosBrowser] Automatic login failed or credentials missing.");
       if (this.headless) {
-        this.addLog("[AternosBrowser] HEADLESS MODE: Cannot log in manually. Please run with headless: false once to log in.");
+        this.addLog("[AternosBrowser] HEADLESS MODE: Cannot log in manually. Please ensure ATERNOS_SESSION is set in .env or provide ATERNOS_USER/PASS.");
       }
     } else {
       this.addLog("[AternosBrowser] Logged in successfully.");
@@ -342,6 +375,49 @@ class AternosBrowser {
       };
     } catch (err) {
       return null;
+    }
+  }
+
+  async getScreenshot() {
+    await this.init();
+    try {
+      return await this.page.screenshot({
+        type: 'jpeg',
+        quality: 60,
+        optimizeForSpeed: true
+      });
+    } catch (err) {
+      return null;
+    }
+  }
+
+  async click(x, y) {
+    await this.init();
+    try {
+      await this.page.mouse.click(x, y);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  async type(text) {
+    await this.init();
+    try {
+      await this.page.keyboard.type(text);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  async navigate(url) {
+    await this.init();
+    try {
+      await this.page.goto(url, { waitUntil: 'domcontentloaded' });
+      return true;
+    } catch (err) {
+      return false;
     }
   }
 
