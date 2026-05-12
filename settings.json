@@ -6,8 +6,8 @@
     "type": "offline"
   },
   "server": {
-    "ip": "YukariYoshiro.aternos.me",
-    "port": 61089,
+    "ip": "AbsoluteSybau.aternos.me",
+    "port": 61097,
     "version": "1.21.11",
     "try-creative": false
   },

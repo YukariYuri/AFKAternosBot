@@ -82,20 +82,32 @@ class AternosBrowser {
           const pages = await this.browser.pages();
           this.page = pages.length > 0 ? pages[0] : await this.browser.newPage();
 
-          // MINIMIZE VIEWPORT TO SAVE RAM
-          await this.page.setViewport({ width: 10, height: 10 });
-          await this.page.setCacheEnabled(false);
-
-          // BLOCK IMAGES BUT ALLOW CSS FOR STABILITY
-          await this.page.setRequestInterception(true);
-          this.page.on('request', (req) => {
-            const type = req.resourceType();
-            if (['image', 'font', 'media'].includes(type)) {
-              req.abort();
-            } else {
-              req.continue();
+          // CLOSE EXTRA TABS (Chrome sometimes restores previous crashed sessions)
+          if (pages.length > 1) {
+            for (let i = 1; i < pages.length; i++) {
+              try { await pages[i].close(); } catch (e) {}
             }
-          });
+          }
+
+          if (this.headless) {
+            // MINIMIZE VIEWPORT TO SAVE RAM
+            await this.page.setViewport({ width: 10, height: 10 });
+            await this.page.setCacheEnabled(false);
+
+            // BLOCK IMAGES BUT ALLOW CSS FOR STABILITY
+            await this.page.setRequestInterception(true);
+            this.page.on('request', (req) => {
+              const type = req.resourceType();
+              if (['image', 'font', 'media'].includes(type)) {
+                req.abort();
+              } else {
+                req.continue();
+              }
+            });
+          } else {
+            // NORMAL VIEWPORT FOR USER INTERACTION
+            await this.page.setViewport({ width: 1280, height: 720 });
+          }
 
           await this.page.setUserAgent(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -138,7 +150,7 @@ class AternosBrowser {
     const isLoginPage = await this.page.evaluate(() => {
       const userField = document.querySelector('input[name="user"]');
       const loginForm = document.querySelector('form[action*="/login/"]');
-      return userField !== null || loginForm !== null || location.href.includes('/login/');
+      return userField !== null || loginForm !== null || location.href.includes('/login/') || location.href.includes('/go/');
     });
 
     if (isLoginPage) {
@@ -154,7 +166,23 @@ class AternosBrowser {
   async getStatus() {
     await this.init();
     try {
-      if (!this.page.url().includes("/server/")) {
+      // Check if the user is currently on the login page by looking for the login form
+      const isLoginScreen = await this.page.evaluate(() => {
+        return document.querySelector('input[name="user"]') !== null || 
+               document.querySelector('.login-form') !== null ||
+               location.href.includes('/go/') || 
+               location.href.includes('/login/') ||
+               location.href.includes('accounts.google.com');
+      });
+
+      if (isLoginScreen) {
+        return { class: "unknown", label: "Please Log In", error: null };
+      }
+
+      const currentUrl = this.page.url();
+      // Ensure we navigate to the exact server page if we are somewhere else, 
+      // but only if we are definitely logged in (which is implied if isLoginScreen is false)
+      if (!currentUrl.includes("/server/")) {
         await this.page.goto(this.serverPage, { waitUntil: "domcontentloaded" });
         await new Promise(r => setTimeout(r, 2000));
       }
