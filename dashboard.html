@@ -326,23 +326,33 @@
       }
 
       function formatUptime(ticks) {
-        const seconds = Math.floor(ticks / 20);
-        if (!seconds || seconds <= 0) return '0s';
+        const totalSeconds = Math.floor(ticks / 20);
+        if (totalSeconds <= 0) return '0s';
+
+        let seconds = totalSeconds;
         const y = Math.floor(seconds / (3600 * 24 * 365));
-        const mo = Math.floor((seconds % (3600 * 24 * 365)) / (3600 * 24 * 30));
-        const d = Math.floor((seconds % (3600 * 24 * 30)) / (3600 * 24));
-        const h = Math.floor((seconds % (3600 * 24)) / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = Math.floor(seconds % 60);
-        
-        let res = '';
-        if (y > 0) res += y + 'y ';
-        if (mo > 0) res += mo + 'mo ';
-        if (d > 0) res += d + 'd ';
-        if (h > 0 || res !== '') res += h + 'h ';
-        if (m > 0 || res !== '') res += m + 'm ';
-        res += s + 's';
-        return res.trim();
+        seconds %= (3600 * 24 * 365); 
+
+        const mo = Math.floor(seconds / (3600 * 24 * 30));
+        seconds %= (3600 * 24 * 30);
+
+        const d = Math.floor(seconds / (3600 * 24));
+        seconds %= (3600 * 24); 
+
+        const h = Math.floor(seconds / 3600);
+        seconds %= 3600; 
+
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60; 
+        let parts = [];
+        if (y > 0) parts.push(y + 'y');
+        if (mo > 0) parts.push(mo + 'mo');
+        if (d > 0) parts.push(d + 'd');
+        if (h > 0) parts.push(h + 'h');
+        if (m > 0) parts.push(m + 'm');
+        if (s > 0 || parts.length === 0) parts.push(s + 's');
+
+        return parts.join(' ');
       }
 
       async function update() {

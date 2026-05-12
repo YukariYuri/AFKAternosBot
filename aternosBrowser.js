@@ -40,6 +40,17 @@ class AternosBrowser {
       }
 
       const launch = async (retryCount = 0) => {
+        // CLEANUP LOCK FILE (Fix for "browser is already running" error on Render)
+        const lockPath = path.join(this.userDataDir, 'SingletonLock');
+        if (fs.existsSync(lockPath)) {
+          try {
+            fs.unlinkSync(lockPath);
+            this.addLog("[AternosBrowser] Stale lock file removed.");
+          } catch (e) {
+            // If we can't delete it, it might actually be in use
+          }
+        }
+
         try {
           if (retryCount === 0) {
             this.addLog("[AternosBrowser] Launching browser...");
@@ -129,9 +140,9 @@ class AternosBrowser {
           this.initializing = null;
           this.addLog("Browser monitor started (Low Memory Mode)");
         } catch (err) {
-          if (err.message.includes("already running") && retryCount < 3) {
-            this.addLog(`[AternosBrowser] Profile locked, retrying in 2s... (Attempt ${retryCount + 1})`);
-            await new Promise(r => setTimeout(r, 2000));
+          if (err.message.includes("already running") && retryCount < 5) {
+            this.addLog(`[AternosBrowser] Profile locked, retrying in 3s... (Attempt ${retryCount + 1})`);
+            await new Promise(r => setTimeout(r, 3000));
             return launch(retryCount + 1);
           }
           
