@@ -382,17 +382,56 @@ class AternosBrowser {
     await this.close();
   }
 
+  hasVisibleDisplay() {
+    if (process.platform === "win32" || process.platform === "darwin") return true;
+    return Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+  }
+
+  async getActivePage() {
+    await this.init();
+
+    if (this.page && !this.page.isClosed()) {
+      return this.page;
+    }
+
+    if (!this.browser) return null;
+
+    const pages = await this.browser.pages().catch(() => []);
+    const active = pages.find((page) => page && !page.isClosed()) || null;
+    if (active) {
+      this.page = active;
+      return active;
+    }
+
+    this.page = await this.browser.newPage().catch(() => null);
+    return this.page;
+  }
+
   async startGoogleLogin() {
+    if (!this.hasVisibleDisplay()) {
+      return {
+        success: false,
+        error: "Google sign-in requires a GUI session. This host has no X server/Display. Run with Xvfb or on a machine with a desktop session.",
+      };
+    }
+
     if (this.headless) {
       this.addLog("[AternosBrowser] Opening visible browser for Google login...");
       await this.setHeadless(false);
     }
 
-    await this.init();
+    const page = await this.getActivePage();
+    if (!page) {
+      return { success: false, error: "Unable to open an active browser page for Google login." };
+    }
 
     try {
-      await this.page.bringToFront();
-      await this.page.goto("https://aternos.org/go/", { waitUntil: "domcontentloaded", timeout: 60000 });
+      if (typeof page.bringToFront === "function") {
+        await page.bringToFront().catch(() => {});
+      }
+
+      this.page = page;
+      await page.goto("https://aternos.org/go/", { waitUntil: "domcontentloaded", timeout: 60000 });
       await new Promise(r => setTimeout(r, 1500));
 
       const browser = this.browser;
@@ -410,7 +449,7 @@ class AternosBrowser {
         });
       });
 
-      const clicked = await this.page.evaluate(() => {
+      const clicked = await page.evaluate(() => {
         const isVisible = (el) => {
           const rect = el.getBoundingClientRect();
           return rect.width > 0 && rect.height > 0;
@@ -439,7 +478,9 @@ class AternosBrowser {
       if (newPage) {
         this.page = newPage;
         await this.page.setViewport({ width: 1280, height: 720 });
-        await this.page.bringToFront();
+        if (typeof this.page.bringToFront === "function") {
+          await this.page.bringToFront().catch(() => {});
+        }
       }
 
       this.addLog("[AternosBrowser] Google login started. Complete it in the visible browser window.");

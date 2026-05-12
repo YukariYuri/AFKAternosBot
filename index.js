@@ -249,7 +249,7 @@ app.post("/aternos/google/start", async (req, res) => {
   try {
     const result = await aternosController.browser.startGoogleLogin();
     if (!result.success) {
-      return res.status(500).json(result);
+      return res.status(400).json(result);
     }
 
     addLog("[Aternos] Google login started from dashboard.");
