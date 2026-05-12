@@ -15,7 +15,7 @@
     "auto-start": {
       "enabled": true,
       "useBrowser": true,
-      "headless": true,
+      "headless": false,
       "pollInterval": 10000,
       "offlineStartDelay": 10000,
       "connectAfterOnlineDelay": 15000,
