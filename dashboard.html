@@ -176,6 +176,62 @@
 
       footer { grid-column: 1 / -1; margin-top: 24px; text-align: center; }
       footer p { font-size: 12px; color: #484f58; }
+
+      /* Remote Browser UI */
+      .browser-section {
+        grid-column: 1 / -1;
+        background: var(--card-bg);
+        backdrop-filter: blur(12px);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 24px;
+        margin-top: 24px;
+      }
+      .browser-container {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .browser-screen-wrapper {
+        position: relative;
+        width: 100%;
+        background: #000;
+        border-radius: 12px;
+        overflow: hidden;
+        aspect-ratio: 16/9;
+        cursor: crosshair;
+      }
+      #browser-screen {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .browser-controls {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      #browser-input {
+        flex: 1;
+        background: rgba(1, 4, 9, 0.4);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 16px;
+        color: #fff;
+        font-family: inherit;
+      }
+      .browser-btn {
+        padding: 10px 20px;
+        background: var(--accent);
+        color: #fff;
+        border-radius: 8px;
+        font-size: 12px;
+        flex: 0 0 auto;
+      }
+      .browser-status {
+        font-size: 12px;
+        color: var(--text-dim);
+      }
     </style>
   </head>
   <body>
@@ -241,6 +297,25 @@
           <!-- Logs will be inserted here -->
         </div>
       </div>
+
+      <div class="browser-section">
+        <div class="log-header">
+          <h2>Remote Aternos Browser (Manual Login)</h2>
+          <div class="browser-status" id="browser-status">Loading screen...</div>
+        </div>
+        <div class="browser-container">
+          <div class="browser-screen-wrapper" id="screen-wrapper">
+            <img id="browser-screen" src="" alt="Browser Screen">
+          </div>
+          <div class="browser-controls">
+            <input type="text" id="browser-input" placeholder="Type here and press Send / Enter to send to browser...">
+            <button class="browser-btn" onclick="sendBrowserText()">Send Text</button>
+            <button class="browser-btn" onclick="refreshBrowser()" style="background: var(--text-dim)">Refresh</button>
+            <button class="browser-btn" onclick="goToAternos()" style="background: var(--warn)">Go to Login</button>
+          </div>
+          <p class="stat-detail">Click on the screen above to perform clicks in the browser. Useful for Google Login buttons.</p>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -250,16 +325,24 @@
         });
       }
 
-      function formatUptime(seconds) {
-        if (!seconds || seconds < 0) return '0s';
-        const h = Math.floor(seconds / 3600);
+      function formatUptime(ticks) {
+        const seconds = Math.floor(ticks / 20);
+        if (!seconds || seconds <= 0) return '0s';
+        const y = Math.floor(seconds / (3600 * 24 * 365));
+        const mo = Math.floor((seconds % (3600 * 24 * 365)) / (3600 * 24 * 30));
+        const d = Math.floor((seconds % (3600 * 24 * 30)) / (3600 * 24));
+        const h = Math.floor((seconds % (3600 * 24)) / 3600);
         const m = Math.floor((seconds % 3600) / 60);
         const s = Math.floor(seconds % 60);
+        
         let res = '';
-        if (h > 0) res += h + 'h ';
-        if (m > 0 || h > 0) res += m + 'm ';
+        if (y > 0) res += y + 'y ';
+        if (mo > 0) res += mo + 'mo ';
+        if (d > 0) res += d + 'd ';
+        if (h > 0 || res !== '') res += h + 'h ';
+        if (m > 0 || res !== '') res += m + 'm ';
         res += s + 's';
-        return res;
+        return res.trim();
       }
 
       async function update() {
@@ -346,8 +429,75 @@
         update();
       }
 
+      // Browser Remote Control
+      let lastScreenshot = 0;
+      async function refreshBrowser() {
+        const screen = document.getElementById('browser-screen');
+        const status = document.getElementById('browser-status');
+        
+        try {
+          const timestamp = Date.now();
+          screen.src = '/aternos/screenshot?t=' + timestamp;
+          status.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+        } catch (e) {
+          status.textContent = 'Failed to load screen';
+        }
+      }
+
+      document.getElementById('screen-wrapper').addEventListener('click', async (e) => {
+        const rect = e.target.getBoundingClientRect();
+        const x = Math.round(((e.clientX - rect.left) / rect.width) * 1280); // Based on our viewport size
+        const y = Math.round(((e.clientY - rect.top) / rect.height) * 720);
+        
+        const status = document.getElementById('browser-status');
+        status.textContent = 'Clicking at ' + x + ', ' + y + '...';
+        
+        await fetch('/aternos/click', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ x, y })
+        });
+        
+        setTimeout(refreshBrowser, 500);
+      });
+
+      async function sendBrowserText() {
+        const input = document.getElementById('browser-input');
+        const text = input.value;
+        if (!text) return;
+        
+        const status = document.getElementById('browser-status');
+        status.textContent = 'Typing...';
+        
+        await fetch('/aternos/type', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        });
+        
+        input.value = '';
+        setTimeout(refreshBrowser, 500);
+      }
+
+      document.getElementById('browser-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendBrowserText();
+      });
+
+      async function goToAternos() {
+        const status = document.getElementById('browser-status');
+        status.textContent = 'Navigating to login...';
+        await fetch('/aternos/navigate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: 'https://aternos.org/go/' })
+        });
+        setTimeout(refreshBrowser, 2000);
+      }
+
       setInterval(update, 5000);
+      setInterval(refreshBrowser, 10000); // Auto refresh every 10s
       update();
+      refreshBrowser();
     </script>
   </body>
 </html>

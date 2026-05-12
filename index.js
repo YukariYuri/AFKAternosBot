@@ -33,9 +33,18 @@ let memoryStats = {
 try {
   if (fs.existsSync("./stats.json")) {
     stats = JSON.parse(fs.readFileSync("./stats.json", "utf8"));
+    // Migration: Convert seconds to ticks if not already done
+    if (!stats.unit || stats.unit !== 'ticks') {
+      stats.totalPlaytime = (stats.totalPlaytime || 0) * 20;
+      stats.unit = 'ticks';
+      saveStats();
+    }
+  } else {
+    stats.unit = 'ticks';
   }
 } catch (e) {
   addLog("[Stats] Failed to load stats.json, starting fresh.");
+  stats.unit = 'ticks';
 }
 
 function saveStats() {
@@ -60,9 +69,9 @@ let botState = {
 // Track total time on server (Playtime) and memory stats
 setInterval(() => {
   if (botState.connected) {
-    stats.totalPlaytime++;
-    // Save to disk every 30 seconds to be safe
-    if (stats.totalPlaytime % 30 === 0) saveStats();
+    stats.totalPlaytime += 20; // Increment by 20 ticks (approx 1 second)
+    // Save to disk every 600 ticks (approx 30 seconds)
+    if (stats.totalPlaytime % 600 === 0) saveStats();
   }
 
   // Sample memory every second for average
@@ -129,6 +138,40 @@ app.get("/health", (req, res) => {
 });
 
 app.get("/ping", (req, res) => res.send("pong"));
+
+// Aternos Browser Remote Control
+app.get("/aternos/screenshot", async (req, res) => {
+  if (!aternosController || !aternosController.browser) return res.status(404).send("Browser not active");
+  const screenshot = await aternosController.browser.getScreenshot();
+  if (screenshot) {
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.send(screenshot);
+  } else {
+    res.status(500).send("Failed to capture screenshot");
+  }
+});
+
+app.post("/aternos/click", async (req, res) => {
+  if (!aternosController || !aternosController.browser) return res.status(404).json({ success: false });
+  const { x, y } = req.body;
+  const success = await aternosController.browser.click(x, y);
+  res.json({ success });
+});
+
+app.post("/aternos/type", async (req, res) => {
+  if (!aternosController || !aternosController.browser) return res.status(404).json({ success: false });
+  const { text } = req.body;
+  const success = await aternosController.browser.type(text);
+  res.json({ success });
+});
+
+app.post("/aternos/navigate", async (req, res) => {
+  if (!aternosController || !aternosController.browser) return res.status(404).json({ success: false });
+  const { url } = req.body;
+  const success = await aternosController.browser.navigate(url);
+  res.json({ success });
+});
+
 
 let botRunning = true;
 
@@ -272,11 +315,24 @@ server.on("error", (err) => {
 });
 
 // FIX: only one definition of formatUptime
-function formatUptime(seconds) {
-  const h = Math.floor(seconds / 3600);
+function formatUptime(ticks) {
+  const seconds = Math.floor(ticks / 20);
+  if (!seconds || seconds <= 0) return '0s';
+  const y = Math.floor(seconds / (3600 * 24 * 365));
+  const mo = Math.floor((seconds % (3600 * 24 * 365)) / (3600 * 24 * 30));
+  const d = Math.floor((seconds % (3600 * 24 * 30)) / (3600 * 24));
+  const h = Math.floor((seconds % (3600 * 24)) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  return `${h}h ${m}m ${s} s`;
+  
+  let res = '';
+  if (y > 0) res += y + 'y ';
+  if (mo > 0) res += mo + 'mo ';
+  if (d > 0) res += d + 'd ';
+  if (h > 0 || res !== '') res += h + 'h ';
+  if (m > 0 || res !== '') res += m + 'm ';
+  res += s + 's';
+  return res.trim();
 }
 
 // ============================================================
