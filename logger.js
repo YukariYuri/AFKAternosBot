@@ -1,12 +1,11 @@
 const logs = [];
 
 function addLog(message) {
-  const cleanMessage = message.replace(/^\[(AternosBrowser|Aternos|Bot|Stats|Server)\]\s*/, "");
-  const category = message.match(/^\[(AternosBrowser|Aternos|Bot|Stats|Server)\]/) 
-                   ? message.match(/^\[(AternosBrowser|Aternos|Bot|Stats|Server)\]/)[1] 
-                   : "System";
+  const cleanMessage = message.replace(/^\[(AternosBrowser|Aternos|Bot|Stats|Server|System|Control)\]\s*/, "");
+  const categoryMatch = message.match(/^\[(AternosBrowser|Aternos|Bot|Stats|Server|System|Control)\]/);
+  const category = categoryMatch ? categoryMatch[1] : "System";
 
-  const MAX_LEN = 300;
+  const MAX_LEN = 500;
   const truncatedMessage = cleanMessage.length > MAX_LEN ? cleanMessage.substring(0, MAX_LEN) + "..." : cleanMessage;
   const time = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
   
@@ -15,7 +14,9 @@ function addLog(message) {
   
   console.log(logStr);
   logs.push(logStr);
-  if (logs.length > 15) logs.shift();
+  
+  // Increase history to 100 entries so they don't disappear too fast
+  if (logs.length > 100) logs.shift();
 }
 
 function getLogs() {

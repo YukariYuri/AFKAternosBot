@@ -4,7 +4,7 @@
   "description": "Robust AFK bot for Minecraft servers with infinite uptime.",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node --expose-gc --max-old-space-size=256 index.js",
     "test": "node --check index.js",
     "postinstall": "npx puppeteer browsers install chrome && node scripts/prune-minecraft-data.js"
   },

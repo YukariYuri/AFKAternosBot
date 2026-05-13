@@ -6,9 +6,9 @@ const DEFAULTS = {
   enabled: false,
   useBrowser: true,
   headless: true,
-  pollInterval: 30000,
-  offlineStartDelay: 10000,
-  connectAfterOnlineDelay: 15000,
+  pollInterval: 10000,
+  offlineStartDelay: 5000,
+  connectAfterOnlineDelay: 3000,
   readyStatuses: ["online"], // Bot will only connect when fully online
   confirmStatuses: ["queue", "confirm", "confirming"],
 };
@@ -143,7 +143,9 @@ class AternosController {
         ? ""
         : `, countdown=${status.countdown}s`;
     
-    // this.addLog(`[Aternos] Status: ${label} (${statusClass}${countdown})`); // Removed to keep logs clean as it's now in stat-card
+    if (status.ajaxToken) {
+      await this.syncTokens();
+    }
 
     // logic for bot connection
     if (statusClass === "offline") {

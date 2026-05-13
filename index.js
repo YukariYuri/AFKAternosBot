@@ -88,7 +88,7 @@ let botState = {
 // Sample memory every 10 seconds for average and force GC if possible
 setInterval(() => {
   if (global.gc) {
-    try { global.gc(); } catch (e) {}
+    try { global.gc(); } catch (e) { }
   }
 
   const currentHeap = process.memoryUsage().heapUsed / 1024 / 1024;
@@ -149,7 +149,7 @@ function updateEnvValues(values) {
 
   Object.entries(values).forEach(([key, value]) => {
     if (!value) return;
-    const envValue = JSON.stringify(String(value));
+    const envValue = String(value);
     const regex = new RegExp(`^${key}=.*`, "m");
     if (regex.test(envContent)) {
       envContent = envContent.replace(regex, `${key}=${envValue}`);
@@ -185,29 +185,15 @@ app.get("/ping", (req, res) => res.send("pong"));
 
 // Aternos Browser Remote Control (with 1s cache to save RAM)
 let screenshotCache = { data: null, time: 0 };
+// SCREENSHOT ENDPOINT REMOVED (Monitor removed)
 app.get("/aternos/screenshot", async (req, res) => {
-  if (!aternosController || !aternosController.browser) return res.status(404).send("Browser not active");
-  
-  const now = Date.now();
-  if (screenshotCache.data && (now - screenshotCache.time < 1000)) {
-    res.setHeader('Content-Type', 'image/webp');
-    return res.send(screenshotCache.data);
-  }
-
-  const screenshot = await aternosController.browser.getScreenshot();
-  if (screenshot) {
-    screenshotCache = { data: screenshot, time: now };
-    res.setHeader('Content-Type', 'image/webp');
-    res.send(screenshot);
-  } else {
-    res.status(500).send("Failed to capture screenshot");
-  }
+  res.status(410).send("Browser monitor is disabled for performance.");
 });
 
 app.post("/aternos/session", async (req, res) => {
   const { session } = req.body;
   if (!session) return res.status(400).json({ success: false, error: "No session provided" });
-  
+
   try {
     updateEnvValues({ ATERNOS_SESSION: session });
     if (aternosController && aternosController.browser) {
@@ -250,6 +236,11 @@ app.post("/aternos/login", async (req, res) => {
 
     addLog("[Aternos] Dashboard login completed.");
     res.json({ success: true });
+    
+    // Trigger immediate check
+    if (aternosController) {
+      aternosController.ensureStarted("dashboard-login").catch(() => {});
+    }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -292,6 +283,11 @@ app.post("/aternos/cookie", async (req, res) => {
 
     addLog("[Aternos] Cookie login completed.");
     res.json({ success: true });
+
+    // Trigger immediate check
+    if (aternosController) {
+      aternosController.ensureStarted("cookie-login").catch(() => {});
+    }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -357,35 +353,10 @@ app.get("/aternos/info", async (req, res) => {
   });
 });
 
-app.post("/aternos/click", async (req, res) => {
-  if (!aternosController || !aternosController.browser) return res.status(404).json({ success: false });
-  const { x, y } = req.body;
-  const success = await aternosController.browser.click(x, y);
-  res.json({ success });
-});
-
-app.post("/aternos/type", async (req, res) => {
-  if (!aternosController || !aternosController.browser) return res.status(404).json({ success: false });
-  const { text } = req.body;
-  const success = await aternosController.browser.type(text);
-  res.json({ success });
-});
-
-app.post("/aternos/navigate", async (req, res) => {
-  if (!aternosController || !aternosController.browser || !aternosController.browser.page) {
-    return res.status(404).json({ success: false });
-  }
-  const { url, action } = req.body;
-  try {
-    if (action === 'back') await aternosController.browser.page.goBack();
-    else if (action === 'forward') await aternosController.browser.page.goForward();
-    else if (action === 'reload') await aternosController.browser.page.reload();
-    else if (url) await aternosController.browser.page.goto(url, { waitUntil: 'domcontentloaded' });
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+// REMOTE CONTROL ENDPOINTS REMOVED
+app.post("/aternos/click", (req, res) => res.status(410).json({ success: false, error: "Disabled" }));
+app.post("/aternos/type", (req, res) => res.status(410).json({ success: false, error: "Disabled" }));
+app.post("/aternos/navigate", (req, res) => res.status(410).json({ success: false, error: "Disabled" }));
 
 
 let botRunning = true;
@@ -539,7 +510,7 @@ function formatUptime(ticks) {
   const h = Math.floor((seconds % (3600 * 24)) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  
+
   let res = '';
   if (y > 0) res += y + 'y ';
   if (mo > 0) res += mo + 'mo ';
@@ -580,15 +551,39 @@ function startSelfPing() {
 startSelfPing();
 
 // ============================================================
-// MEMORY MONITORING
+// MEMORY MONITORING (MAX 400MB)
 // ============================================================
+const MEMORY_LIMIT_MB = 380; // Hard limit at 380MB to stay under 400MB total
+
 setInterval(
   () => {
     const mem = process.memoryUsage();
-    const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(2);
-    addLog(`[Memory] Heap: ${heapMB} MB`);
+    const rssMB = (mem.rss / 1024 / 1024);
+    const heapMB = (mem.heapUsed / 1024 / 1024);
+    
+    addLog(`[Memory] RSS: ${rssMB.toFixed(2)} MB, Heap: ${heapMB.toFixed(2)} MB`);
+
+    if (rssMB > MEMORY_LIMIT_MB) {
+      addLog(`[Memory] CRITICAL: Memory usage (${rssMB.toFixed(2)} MB) exceeded limit! Attempting emergency cleanup...`);
+      
+      if (global.gc) {
+        try { global.gc(); } catch (e) {}
+      }
+
+      // If still over limit, recycle browser or restart
+      if (rssMB > MEMORY_LIMIT_MB + 20) {
+        addLog("[Memory] Emergency restart: Memory usage too high.");
+        if (aternosController && aternosController.browser) {
+          aternosController.browser.close().then(() => {
+            process.exit(1); // Exit and let process manager (like Render/PM2) restart us
+          });
+        } else {
+          process.exit(1);
+        }
+      }
+    }
   },
-  5 * 60 * 1000,
+  2 * 60 * 1000, // Check every 2 minutes
 );
 
 // ============================================================
@@ -721,7 +716,7 @@ function createBot() {
       bot.removeAllListeners();
       bot.end();
       bot.quit();
-    } catch (e) {}
+    } catch (e) { }
     bot = null;
   }
 
@@ -746,8 +741,8 @@ function createBot() {
       port: config.server.port,
       version: botVersion,
       viewDistance: 'tiny', // Memory optimization
-      hideErrors: false,
-      checkTimeoutInterval: 30000,
+      hideErrors: true, // Reduce log noise
+      checkTimeoutInterval: 15000, // Faster timeout check
     });
 
     // SPECTATOR MODE OPTIMIZATION: 
@@ -781,7 +776,7 @@ function createBot() {
         bot = null;
         scheduleReconnect();
       }
-    }, 150000); // 150s - Aternos servers can take 90-120s to finish spawning a player
+    }, 60000); // Reduced from 150s to 60s for faster recovery
 
     // FIX: guard against spawn firing twice (can happen on some servers)
     let spawnHandled = false;
@@ -1105,7 +1100,7 @@ function initializeModules(bot, mcData, defaultMove) {
         if (!bot || !botState.connected) return;
         try {
           bot.swingArm();
-        } catch (e) {}
+        } catch (e) { }
       },
       10000 + Math.floor(Math.random() * 50000),
     );
@@ -1117,7 +1112,7 @@ function initializeModules(bot, mcData, defaultMove) {
         try {
           const slot = Math.floor(Math.random() * 9);
           bot.setQuickBarSlot(slot);
-        } catch (e) {}
+        } catch (e) { }
       },
       30000 + Math.floor(Math.random() * 90000),
     );
@@ -1144,7 +1139,7 @@ function initializeModules(bot, mcData, defaultMove) {
                 count--;
                 setTimeout(doTeabag, 150);
               }, 150);
-            } catch (e) {}
+            } catch (e) { }
           };
           doTeabag();
         }
@@ -1192,7 +1187,7 @@ function initializeModules(bot, mcData, defaultMove) {
       try {
         if (typeof bot.setControlState === "function")
           bot.setControlState("sneak", true);
-      } catch (e) {}
+      } catch (e) { }
     }
   }
 
@@ -1670,7 +1665,7 @@ process.on("unhandledRejection", (reason) => {
     clearAllIntervals();
     botState.connected = false;
     if (bot) {
-      try { bot.end(); } catch (_) {}
+      try { bot.end(); } catch (_) { }
       bot = null;
     }
     scheduleReconnect();
@@ -1698,8 +1693,7 @@ addLog(
   `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
 );
 addLog(
-  `Aternos Auto-Start: ${
-    isAternosAutoStartEnabled() ? "Enabled" : "Disabled"
+  `Aternos Auto-Start: ${isAternosAutoStartEnabled() ? "Enabled" : "Disabled"
   }`,
 );
 addLog("=".repeat(50));
@@ -1720,7 +1714,7 @@ async function main() {
   if (isAternosAutoStartEnabled()) {
     await aternosController.start();
   }
-  
+
   createBot();
 }
 
