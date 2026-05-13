@@ -276,12 +276,17 @@ app.post("/aternos/cookie", async (req, res) => {
       addLog("[Aternos] Cookie login remembered in .env.");
     }
 
-    const tokens = await aternosController.syncTokens();
-    if (!tokens || !tokens.session) {
-      return res.status(401).json({ success: false, error: "Cookie login did not produce an Aternos session cookie." });
+    // CRITICAL: Close the browser to force re-init with new environment variables
+    if (aternosController && aternosController.browser) {
+      await aternosController.browser.close();
+      addLog("[Aternos] Browser recycled to apply new session.");
     }
 
-    addLog("[Aternos] Cookie login completed.");
+    // Trigger immediate check
+    if (aternosController) {
+      aternosController.ensureStarted("dashboard-cookie").catch(() => {});
+    }
+
     res.json({ success: true });
 
     // Trigger immediate check

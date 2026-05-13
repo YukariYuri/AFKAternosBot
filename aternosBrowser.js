@@ -27,7 +27,7 @@ class AternosBrowser {
         await this.page.evaluate(() => 1);
         return;
       } catch (e) {
-        this.addLog("[AternosBrowser] Page detached or unresponsive, recovering...");
+        this.addLog("[AternosBrowser] Page state lost, recovering...");
         this.isInitialized = false;
       }
     }
@@ -118,11 +118,10 @@ class AternosBrowser {
             }
 
             await this.page.setViewport({ width: 1280, height: 720 });
-
             await this.page.setRequestInterception(false);
-
             await this.page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
 
+            // PERSISTENT ADBLOCKER BYPASS
             await this.page.evaluateOnNewDocument(() => {
               const findInShadows = (root, text) => {
                 if (!root) return null;
@@ -201,7 +200,7 @@ class AternosBrowser {
             this.isInitialized = true;
             this.initializing = null;
             this.launchTime = Date.now();
-            this.addLog("Browser background process started.");
+            this.addLog("[AternosBrowser] Launch successful.");
           } catch (err) {
             if (err.message.includes("already running") && retryCount < 5) {
               this.addLog(`[AternosBrowser] Profile locked, retrying... (Attempt ${retryCount + 1})`);
@@ -225,66 +224,67 @@ class AternosBrowser {
 
   async ensureLoggedIn() {
     await this.init();
-    this.addLog("[AternosBrowser] Checking login status...");
+    this.addLog("[AternosBrowser] Verifying session...");
 
     try {
-      await this.page.goto(this.serverPage, { waitUntil: "networkidle2", timeout: 45000 });
+      // Re-apply environment cookies before check
+      const envSession = String(process.env.ATERNOS_SESSION || "").replace(/^["']|["']$/g, "").trim();
+      if (envSession) {
+        await this.page.setCookie({
+          name: 'ATERNOS_SESSION', value: envSession, domain: '.aternos.org', path: '/', secure: true, httpOnly: true
+        });
+      }
+
+      await this.page.goto(this.serverPage, { waitUntil: "networkidle2", timeout: 60000 });
       await new Promise(r => setTimeout(r, 3000));
     } catch (err) {
-      this.addLog(`[AternosBrowser] Navigation error: ${err.message}`);
+      this.addLog(`[AternosBrowser] Navigation warning: ${err.message}`);
     }
 
     const loginState = await this.page.evaluate(() => {
       const bodyText = document.body ? document.body.innerText : "";
       const title = document.title;
       const isCloudflare = bodyText.includes("Cloudflare") || bodyText.includes("Verify you are human") || title.includes("Just a moment");
-      const isError = title.includes("502") || title.includes("503") || title.includes("Bad Gateway") || title.includes("Service Unavailable") || bodyText.includes("Error 502") || bodyText.includes("Error 503");
-
+      const isError = title.includes("502") || title.includes("503") || title.includes("Bad Gateway") || bodyText.includes("Error 502") || bodyText.includes("Error 503");
       const userField = document.querySelector('input[name="user"], #user');
       const logoutBtn = document.querySelector('a[href*="/logout/"], .logout-button');
-      const serversBtn = document.querySelector('a[href*="/servers/"], .servers-button');
-      const serverStatus = document.querySelector('.statuslabel-label, .server-status');
-
+      
       return {
         isCloudflare,
         isError,
         isLoginPage: userField !== null || location.href.includes('/login/') || location.href.includes('/go/'),
-        isLoggedIn: logoutBtn !== null || serversBtn !== null || serverStatus !== null || location.href.includes('/server/'),
+        isLoggedIn: logoutBtn !== null || location.href.includes('/server/'),
         bodyLength: bodyText.length
       };
     });
 
     if (loginState.isError) {
-      this.addLog("[AternosBrowser] Aternos site is down or experiencing issues (502/503). Waiting...");
+      this.addLog("[AternosBrowser] Site unavailable (502/503). Waiting for recovery.");
       return;
     }
 
     if (loginState.isCloudflare) {
-      this.addLog("[AternosBrowser] Cloudflare challenge detected! Please login manually via dashboard.");
+      this.addLog("[AternosBrowser] Cloudflare active. Please solve the challenge manually.");
       return;
     }
 
     if (loginState.isLoginPage || (loginState.bodyLength < 1000 && !loginState.isLoggedIn)) {
-      this.addLog("[AternosBrowser] Not logged in. Attempting automatic login...");
+      this.addLog("[AternosBrowser] Redirected to login page. Checking credentials...");
       const username = (process.env.ATERNOS_USER || "").trim();
       const password = (process.env.ATERNOS_PASS || "");
       if (username && password) {
         try {
           const result = await this.loginWithCredentials(username, password);
-          if (result.success) {
-            this.addLog("[AternosBrowser] Automatic login succeeded.");
-            return;
-          } else {
-            this.addLog(`[AternosBrowser] Automatic login failed: ${result.error}`);
-          }
+          if (result.success) this.addLog("[AternosBrowser] Login successful.");
+          else this.addLog(`[AternosBrowser] Login failed: ${result.error}`);
         } catch (e) {
-          this.addLog(`[AternosBrowser] Login attempt failed: ${e.message}`);
+          this.addLog(`[AternosBrowser] Login exception: ${e.message}`);
         }
       } else {
-        this.addLog("[AternosBrowser] Credentials missing in .env.");
+        this.addLog("[AternosBrowser] No credentials/valid session found. Update via dashboard.");
       }
     } else {
-      this.addLog("[AternosBrowser] Already logged in successfully.");
+      this.addLog("[AternosBrowser] Session is valid.");
     }
   }
 
@@ -294,7 +294,7 @@ class AternosBrowser {
     const pass = String(password || "");
     if (!user || !pass) return { success: false, error: "Username and password are required." };
 
-    this.addLog(`[AternosBrowser] Logging in with username: ${user}`);
+    this.addLog(`[AternosBrowser] Credential login: ${user}`);
     try {
       await this.page.goto("https://aternos.org/go/", { waitUntil: "networkidle2", timeout: 60000 });
       await this.page.waitForSelector('input[name="user"], #user', { visible: true, timeout: 30000 });
@@ -319,47 +319,60 @@ class AternosBrowser {
       });
 
       if (!clicked) await this.page.keyboard.press("Enter");
-      await new Promise(r => setTimeout(r, 5000));
+      await new Promise(r => setTimeout(r, 8000));
 
       const result = await this.page.evaluate(() => {
         const bodyText = (document.body ? document.body.innerText : "").toLowerCase();
-        const loginField = document.querySelector('input[name="user"], #user');
         if (location.href.includes("/server/") || location.href.includes("/servers/")) return { success: true };        
-        if (loginField && (bodyText.includes("captcha") || bodyText.includes("verification"))) return { success: false, manualRequired: true, error: "Captcha required." };
-        if (loginField) return { success: false, error: "Login failed." };
+        if (bodyText.includes("captcha") || bodyText.includes("verification")) return { success: false, manualRequired: true, error: "Captcha required." };
+        if (document.querySelector('input[name="user"]')) return { success: false, error: "Incorrect credentials." };
         return { success: true };
       });
 
       if (result.success && !this.page.url().includes("/server/")) {
-        await this.page.goto(this.serverPage, { waitUntil: "networkidle2", timeout: 30000 });
+        await this.page.goto(this.serverPage, { waitUntil: "networkidle2", timeout: 60000 });
       }
       return result;
     } catch (err) {
       return { success: false, error: err.message };
     }
   }
+
   async loginWithCookieString(cookieString) {
     await this.init();
     const cookies = this.parseCookieString(cookieString);
     if (!cookies.length) return { success: false, error: "No valid cookies found." };
+    this.addLog("[AternosBrowser] Force applying session cookies...");
     try {
       const page = await this.getActivePage();
-      await page.goto(this.baseUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+      await page.goto(this.baseUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.setCookie(...cookies);
-      await page.goto(this.serverPage, { waitUntil: "networkidle2", timeout: 20000 });
-      await new Promise((r) => setTimeout(r, 2000));
-      return { success: true };
+      await page.goto(this.serverPage, { waitUntil: "networkidle2", timeout: 60000 });
+      await new Promise((r) => setTimeout(r, 3000));
+      const url = page.url();
+      if (url.includes("/server/")) return { success: true };
+      return { success: false, error: "Cookie didn't trigger login. Check if it's expired." };
     } catch (err) {
       return { success: false, error: err.message };
     }
   }
 
   parseCookieString(cookieString) {
-    return String(cookieString || "").split(";").map(part => {
-      const eq = part.indexOf("=");
-      if (eq === -1) return null;
-      return { name: part.slice(0, eq).trim(), value: part.slice(eq + 1).trim(), domain: ".aternos.org", path: "/", secure: true, httpOnly: true };
-    }).filter(Boolean);
+    const raw = String(cookieString || "").trim();
+    if (raw.includes("ATERNOS_SESSION=")) {
+        return raw.split(";").map(part => {
+          const eq = part.indexOf("=");
+          if (eq === -1) return null;
+          const name = part.slice(0, eq).trim();
+          const value = part.slice(eq + 1).trim();
+          return { name, value, domain: ".aternos.org", path: "/", secure: true, httpOnly: true };
+        }).filter(Boolean);
+    }
+    // If just the ID is pasted
+    if (raw.length > 20 && !raw.includes("=")) {
+        return [{ name: "ATERNOS_SESSION", value: raw, domain: ".aternos.org", path: "/", secure: true, httpOnly: true }];
+    }
+    return [];
   }
 
   async setHeadless(headless) {
@@ -378,81 +391,56 @@ class AternosBrowser {
 
   async getStatus() {
     if (this.isInitialized && this.launchTime && (Date.now() - this.launchTime > 15 * 60 * 1000)) {
-      this.addLog("[AternosBrowser] Recycling browser...");
+      this.addLog("[AternosBrowser] Periodic browser recycle...");
       await this.close();
     }
     await this.init();
     try {
       const isLogin = await this.page.evaluate(() => document.querySelector('input[name="user"]') !== null || location.href.includes('/login/'));
-      if (isLogin) return { class: "unknown", label: "Please Log In" };
+      if (isLogin) return { class: "unknown", label: "Needs Login" };
 
       if (!this.page.url().includes("/server/")) {
-        await this.page.goto(this.serverPage, { waitUntil: "networkidle2", timeout: 20000 });
+        await this.page.goto(this.serverPage, { waitUntil: "networkidle2", timeout: 30000 });
       }
 
-      // EXPLICIT BYPASS CHECK
-      const bypassResult = await this.page.evaluate(() => {
+      // BYPASS CHECK
+      await this.page.evaluate(() => {
           const findInShadows = (root, text) => {
             if (!root) return null;
             const selectors = 'a, button, div, span, [role="button"], .btn';
             const elements = Array.from(root.querySelectorAll(selectors));
             for (const el of elements) {
-              const content = (el.textContent || el.innerText || "").toLowerCase();
-              if (content.includes(text.toLowerCase())) return el;
+              if ((el.textContent || el.innerText || "").toLowerCase().includes(text.toLowerCase())) return el;
             }
             const all = root.querySelectorAll('*');
-            for (const el of all) {
-              if (el.shadowRoot) {
-                const found = findInShadows(el.shadowRoot, text);
-                if (found) return found;
-              }
-            }
+            for (const el of all) { if (el.shadowRoot) { const f = findInShadows(el.shadowRoot, text); if (f) return f; } }
             return null;
           };
-
-          const candidates = ['continue with adblock', 'continue anyway', 'adblocker anyway'];
-          for (const c of candidates) {
-            const btn = findInShadows(document, c);
-            if (btn) {
-               const rect = btn.getBoundingClientRect();
-               if (rect.width > 0 && rect.height > 0) {
-                   btn.click();
-                   return "clicked: " + c;
-               }
-               return "found but hidden: " + c;
-            }
-          }
-          return "not found";
+          const btn = findInShadows(document, 'continue with adblock');
+          if (btn && btn.getBoundingClientRect().width > 0) btn.click();
       });
 
-      if (bypassResult.startsWith("clicked")) {
-          this.addLog(`[AternosBrowser] Adblock bypass: ${bypassResult}`);
-          await new Promise(r => setTimeout(r, 2000));
-      }
-
-      try {
-        await this.page.waitForSelector(".statuslabel-label, .statuslabel, .server-status", { timeout: 3000 });
-      } catch (e) { }
+      try { await this.page.waitForSelector(".statuslabel-label, .statuslabel, .server-status", { timeout: 5000 }); } catch (e) { }
 
       const status = await this.page.evaluate(() => {
         try {
-          if (!document.body) return { error: "document.body is null" };
-          const selectors = [".statuslabel-label", ".statuslabel", "#status", ".status-label", ".server-status"];
-          let el = null;
-          for (const s of selectors) {
-            el = document.querySelector(s);
-            if (el && el.innerText.trim().length > 0) break;
+          if (!document.body) return { error: "Page not ready" };
+          const txt = document.body.innerText || "";
+          const title = document.title;
+          if (title.includes("502") || title.includes("503") || title.includes("Bad Gateway") || txt.includes("Error 502")) {
+             return { error: "Site Unavailable", label: "Aternos Offline", class: "offline" };
           }
 
+          const selectors = [".statuslabel-label", ".statuslabel", "#status", ".status-label", ".server-status"];       
+          let el = null;
+          for (const s of selectors) { el = document.querySelector(s); if (el && el.innerText.trim().length > 0) break; }
+
           if (!el) {
-             const txt = document.body.innerText || "";
              const possible = ["offline", "online", "starting", "loading", "queue", "waiting", "stopping", "saving", "crashed"];
              for (const s of possible) {
-               if (txt.toLowerCase().includes(s)) {
-                 return { class: s === "crashed" ? "offline" : s, label: s.charAt(0).toUpperCase() + s.slice(1) };
-               }
+               if (txt.toLowerCase().includes(s)) return { class: s === "crashed" ? "offline" : s, label: s.charAt(0).toUpperCase() + s.slice(1) };      
              }
-             return { error: "Status element not found", bodyLength: txt.length, bodySnippet: txt.substring(0, 500) };
+             return { error: "Status missing", bodyLength: txt.length, bodySnippet: txt.substring(0, 200) };  
           }
 
           const label = el.innerText.trim();
@@ -465,13 +453,17 @@ class AternosBrowser {
         } catch (e) { return { error: e.message }; }
       });
 
+      if (status && status.error === "Site Unavailable") {
+         this.addLog("[AternosBrowser] Aternos site is down. Retrying in 30s...");
+         await new Promise(r => setTimeout(r, 30000));
+         return status;
+      }
+
       if (status && status.error) {
-        this.addLog(`[AternosBrowser] Status element missing (Body: ${status.bodyLength} chars)`);
-        if (status.bodySnippet) this.addLog(`[AternosBrowser] Snippet: ${status.bodySnippet.substring(0, 100)}...`);
         this.statusFailCount = (this.statusFailCount || 0) + 1;
         if (this.statusFailCount >= 2) {
            this.statusFailCount = 0;
-           await this.page.reload({ waitUntil: "networkidle2" });
+           await this.page.reload({ waitUntil: "networkidle2", timeout: 60000 }).catch(() => {});
         }
       } else {
         this.statusFailCount = 0;
@@ -496,7 +488,7 @@ class AternosBrowser {
       });
       if (clicked) {
         this.addLog("[AternosBrowser] Start button clicked.");
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 5000));
         await this.confirmQueue();
       }
     } catch (err) { }
@@ -535,7 +527,7 @@ class AternosBrowser {
   async getTokens() {
     await this.init();
     try {
-      if (!this.page.url().includes("/server/")) await this.page.goto(this.serverPage, { waitUntil: "networkidle2" });
+      if (!this.page.url().includes("/server/")) await this.page.goto(this.serverPage, { waitUntil: "networkidle2" });  
       const cookies = await this.page.cookies();
       const session = cookies.find(c => c.name === 'ATERNOS_SESSION');
       const ajaxToken = await this.page.evaluate(() => window.ajaxToken || null);
