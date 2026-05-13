@@ -651,6 +651,38 @@ function markAternosNotReadyFromMinecraft(reason) {
   }
 }
 
+function markAternosReadyFromMinecraft() {
+  if (aternosController && typeof aternosController.markMinecraftConnected === "function") {
+    aternosController.markMinecraftConnected();
+  }
+}
+
+function getBotDimension(currentBot) {
+  return String(
+    currentBot?.game?.dimension ||
+    currentBot?.game?.dimensionName ||
+    currentBot?.entity?.dimension ||
+    "",
+  ).toLowerCase();
+}
+
+function isOverworldDimension(currentBot) {
+  const dimension = getBotDimension(currentBot);
+  return !dimension || dimension === "overworld" || dimension === "minecraft:overworld" || dimension === "0";
+}
+
+function enforceOverworld(currentBot, source) {
+  if (!currentBot || !botState.connected || isOverworldDimension(currentBot)) return;
+  const dimension = getBotDimension(currentBot) || "unknown";
+  addLog(`[Bot] Not in overworld (${dimension}) after ${source}; reconnecting through Aternos gate.`);
+  markAternosNotReadyFromMinecraft(`not-overworld:${dimension}`);
+  try {
+    currentBot.end("not-overworld");
+  } catch (e) {
+    scheduleReconnect();
+  }
+}
+
 function disconnectCurrentBot(reason) {
   clearAllIntervals();
   clearBotTimeouts();
@@ -810,6 +842,7 @@ function createBot() {
       botState.reconnectAttempts = 0;
       isReconnecting = false;
       forceAutoDetectVersion = false;
+      markAternosReadyFromMinecraft();
 
       addLog(
         `[Bot] [+] Successfully spawned on server! (Version: ${bot.version})`,
@@ -835,6 +868,7 @@ function createBot() {
 
       initializeModules(bot, mcData, defaultMove);
       startConnectionWatchdog(bot);
+      setTimeout(() => enforceOverworld(bot, "spawn"), 5000);
 
       // Attempt creative mode (only works if bot has OP and enabled in settings)
       setTimeout(() => {
@@ -852,6 +886,8 @@ function createBot() {
           addLog("[INFO] Bot is now in Creative Mode.");
         }
       });
+
+      bot.on("game", () => enforceOverworld(bot, "game update"));
     });
 
     // FIX: 'kicked' fires before 'end'. Remove the scheduleReconnect from 'kicked'

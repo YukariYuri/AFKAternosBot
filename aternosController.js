@@ -41,6 +41,7 @@ class AternosController {
     this.lastConnectAt = 0;
     this.lastError = null;
     this.running = false;
+    this.minecraftAuthoritative = false;
   }
 
   isEnabled() {
@@ -49,19 +50,30 @@ class AternosController {
 
   isReadyForMinecraft() {
     if (!this.isEnabled()) return true;
+    if (this.minecraftAuthoritative) return true;
     if (this.lastError) return false;
     return this.config.readyStatuses.includes(this.lastStatus?.class);
   }
 
+  markMinecraftConnected() {
+    if (!this.isEnabled()) return;
+    this.minecraftAuthoritative = true;
+    this.lastStatus = { class: "online", label: "Online (Minecraft connected)" };
+    this.lastError = null;
+    this.browser.close().catch(() => {});
+  }
+
   markMinecraftDisconnected(reason) {
     if (!this.isEnabled()) return;
+    this.minecraftAuthoritative = false;
     const text = String(reason || "").toLowerCase();
     if (
       text.includes("server closed") ||
       text.includes("socketclosed") ||
       text.includes("econnreset") ||
       text.includes("keepalive") ||
-      text.includes("timed out")
+      text.includes("timed out") ||
+      text.includes("not-overworld")
     ) {
       this.lastStatus = { class: "unknown", label: "Minecraft Disconnected" };
       this.lastError = "Minecraft disconnected; waiting for Aternos status confirmation.";
@@ -125,6 +137,8 @@ class AternosController {
 
   async ensureStarted(reason) {
     if (!this.isEnabled()) return;
+    const state = this.getBotState ? this.getBotState() : null;
+    if (state && state.connected && this.minecraftAuthoritative) return;
     await this.tick(reason || "ensure-started");
   }
 
@@ -133,10 +147,13 @@ class AternosController {
     this.isTicking = true;
 
     try {
+      const state = this.getBotState ? this.getBotState() : null;
+      if (state && state.connected && this.minecraftAuthoritative) return;
+
       // MEMORY OPTIMIZATION: If the Minecraft bot is actively connected to the server,
     // AND we already confirmed the server is fully "online", we can skip waking up Puppeteer!
-    const state = this.getBotState ? this.getBotState() : null;
     if (state && state.connected && reason === "poll" && this.lastStatus && this.lastStatus.class === "online") {
+      this.minecraftAuthoritative = true;
       return;
     }
 
