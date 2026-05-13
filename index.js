@@ -626,9 +626,14 @@ function resetReconnectState() {
 }
 
 function getAternosConfig() {
-  return config.aternos && config.aternos["auto-start"]
+  const autoStart = config.aternos && config.aternos["auto-start"]
     ? config.aternos["auto-start"]
     : {};
+
+  return {
+    ...autoStart,
+    serverIp: config.server && config.server.ip,
+  };
 }
 
 function isAternosAutoStartEnabled() {
@@ -638,6 +643,12 @@ function isAternosAutoStartEnabled() {
 
 function isAternosReadyForMinecraft() {
   return !aternosController || aternosController.isReadyForMinecraft();
+}
+
+function markAternosNotReadyFromMinecraft(reason) {
+  if (aternosController && typeof aternosController.markMinecraftDisconnected === "function") {
+    aternosController.markMinecraftDisconnected(reason);
+  }
 }
 
 function disconnectCurrentBot(reason) {
@@ -850,6 +861,7 @@ function createBot() {
       const kickReason =
         typeof reason === "object" ? JSON.stringify(reason) : reason;
       addLog(`[Bot] Kicked: ${kickReason}`);
+      markAternosNotReadyFromMinecraft(kickReason);
       botState.connected = false;
       botState.errors.push({
         type: "kicked",
@@ -892,6 +904,7 @@ function createBot() {
     // FIX: 'end' is the single reconnect trigger
     bot.on("end", (reason) => {
       addLog(`[Bot] Disconnected: ${reason || "Unknown reason"}`);
+      markAternosNotReadyFromMinecraft(reason || "Unknown reason");
       botState.connected = false;
       clearAllIntervals();
       spawnHandled = false; // reset for next connection
@@ -914,6 +927,7 @@ function createBot() {
     bot.on("error", (err) => {
       const msg = err.message || "";
       addLog(`[Bot] Error: ${msg}`);
+      markAternosNotReadyFromMinecraft(msg);
       botState.errors.push({ type: "error", message: msg, time: Date.now() });
       const lower = msg.toLowerCase();
       if (

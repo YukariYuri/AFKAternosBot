@@ -31,6 +31,8 @@ class AternosController {
     this.browser = new AternosBrowser({
       addLog: this.addLog,
       headless: this.config.headless,
+      serverName: this.config.serverName,
+      serverIp: this.config.serverIp,
     });
 
     this.timer = null;
@@ -47,7 +49,23 @@ class AternosController {
 
   isReadyForMinecraft() {
     if (!this.isEnabled()) return true;
+    if (this.lastError) return false;
     return this.config.readyStatuses.includes(this.lastStatus?.class);
+  }
+
+  markMinecraftDisconnected(reason) {
+    if (!this.isEnabled()) return;
+    const text = String(reason || "").toLowerCase();
+    if (
+      text.includes("server closed") ||
+      text.includes("socketclosed") ||
+      text.includes("econnreset") ||
+      text.includes("keepalive") ||
+      text.includes("timed out")
+    ) {
+      this.lastStatus = { class: "unknown", label: "Minecraft Disconnected" };
+      this.lastError = "Minecraft disconnected; waiting for Aternos status confirmation.";
+    }
   }
 
   getPublicState() {
@@ -129,6 +147,7 @@ class AternosController {
     }
 
     if (status.error) {
+      this.lastStatus = { class: "unknown", label: status.label || "Status Error" };
       this.handleError(new Error(status.error));
       return;
     }
