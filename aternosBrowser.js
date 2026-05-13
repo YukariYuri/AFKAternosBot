@@ -172,6 +172,18 @@ class AternosBrowser {
     }
   }
 
+  async waitForServerPageAfterCardClick(page) {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      await this.closeExtraPages().catch(() => {});
+      const activePage = await this.getActivePage();
+      const url = activePage.url();
+      if (url.includes("aternos.org/server/") && !url.includes("aternos.org/servers/")) return activePage;
+      await new Promise(r => setTimeout(r, 500));
+    }
+    return page;
+  }
+
   async safeEvaluate(page, fn, ...args) {
     try {
       if (await this.isAwSnapPage(page)) throw new Error("Aw Snap / Out of Memory");
@@ -275,9 +287,12 @@ class AternosBrowser {
     } else {
       // Aternos server cards often use href="" plus data-id/title. Click that card, then load /server/.
       await this.clickSelectedServerCard(page, this.selectedServerCard);
-      await new Promise(r => setTimeout(r, 1200));
+      page = await this.waitForServerPageAfterCardClick(page);
       if (!page.url().includes("/server/") || page.url().includes("/servers/")) {
-        page = await this.safeGoto(this.serverPage, { waitUntil: "domcontentloaded", timeout: 60000 });
+        page = await this.safeGoto(this.serverPage, { waitUntil: "domcontentloaded", timeout: 60000 }).catch((err) => {
+          if (String(err.message || "").includes("net::ERR_ABORTED")) return this.getActivePage();
+          throw err;
+        });
       }
     }
     await this.closeExtraPages();
