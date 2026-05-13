@@ -9,7 +9,7 @@ const LOW_MEMORY_VIEWPORT = { width: 640, height: 480, deviceScaleFactor: 1 };
 const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_BROWSER_RETRIES = 1;
 const BLOCKED_RESOURCE_TYPES = new Set(["image", "font", "stylesheet", "media"]);
-const DEFAULT_CHROME_HEAP_MB = 96;
+const DEFAULT_CHROME_HEAP_MB = 80;
 const CRASH_WATCH_INTERVAL_MS = 5000;
 
 class AternosBrowser {

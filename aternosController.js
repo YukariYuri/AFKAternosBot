@@ -101,13 +101,6 @@ class AternosController {
     this.running = true;
     this.addLog("[Aternos] Auto-start monitor enabled (Browser-based).");
 
-    try {
-      await this.browser.ensureLoggedIn();
-      await this.syncTokens();
-    } catch (err) {
-      this.handleError(err);
-    }
-
     const poll = async () => {
       try {
         await this.tick("poll");
@@ -212,6 +205,11 @@ class AternosController {
     // Default: if it's some other state like 'stopping', 'loading', etc.
     this.disconnectMinecraftBot(`Aternos server is ${statusClass}`);
   } finally {
+    const state = this.getBotState ? this.getBotState() : null;
+    if (!state || !state.connected || !this.minecraftAuthoritative) {
+      // Browser checks are short-lived on 512MB hosts. Keeping Chromium resident with Mineflayer causes OOM.
+      await this.browser.close().catch(() => {});
+    }
     this.isTicking = false;
   }
 }
@@ -222,7 +220,11 @@ class AternosController {
 
     this.lastStartAt = now;
     this.addLog(`[Aternos] Sending start request via browser (${reason || "offline"}).`);
-    await this.browser.startServer();
+    try {
+      await this.browser.startServer();
+    } finally {
+      await this.browser.close().catch(() => {});
+    }
   }
 
   disconnectMinecraftBot(reason) {
@@ -249,6 +251,7 @@ class AternosController {
   }
 
   async syncTokens() {
+    if (!this.browser.browser) return null;
     const tokens = await this.browser.getTokens();
     if (!tokens || !tokens.session) return tokens;
 
