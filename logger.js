@@ -5,7 +5,7 @@ function addLog(message) {
   const categoryMatch = message.match(/^\[(AternosBrowser|Aternos|Bot|Stats|Server|System|Control)\]/);
   const category = categoryMatch ? categoryMatch[1] : "System";
 
-  const MAX_LEN = 500;
+  const MAX_LEN = 300; // Reduced from 500
   const truncatedMessage = cleanMessage.length > MAX_LEN ? cleanMessage.substring(0, MAX_LEN) + "..." : cleanMessage;
   const time = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
   
@@ -15,8 +15,8 @@ function addLog(message) {
   console.log(logStr);
   logs.push(logStr);
   
-  // Increase history to 100 entries so they don't disappear too fast
-  if (logs.length > 100) logs.shift();
+  // Reduced from 100 to 40 entries
+  if (logs.length > 40) logs.shift();
 }
 
 function getLogs() {

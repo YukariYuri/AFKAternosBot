@@ -556,9 +556,9 @@ function startSelfPing() {
 startSelfPing();
 
 // ============================================================
-// MEMORY MONITORING (MAX 400MB)
+// MEMORY MONITORING (STRICT LIMIT)
 // ============================================================
-const MEMORY_LIMIT_MB = 380; // Hard limit at 380MB to stay under 400MB total
+const MEMORY_LIMIT_MB = 350; // Set a stricter limit to trigger cleanup early
 
 setInterval(
   () => {
@@ -566,29 +566,31 @@ setInterval(
     const rssMB = (mem.rss / 1024 / 1024);
     const heapMB = (mem.heapUsed / 1024 / 1024);
     
-    addLog(`[Memory] RSS: ${rssMB.toFixed(2)} MB, Heap: ${heapMB.toFixed(2)} MB`);
+    // addLog(`[Memory] RSS: ${rssMB.toFixed(2)} MB, Heap: ${heapMB.toFixed(2)} MB`);
 
     if (rssMB > MEMORY_LIMIT_MB) {
-      addLog(`[Memory] CRITICAL: Memory usage (${rssMB.toFixed(2)} MB) exceeded limit! Attempting emergency cleanup...`);
+      addLog(`[Memory] Memory usage (${rssMB.toFixed(2)} MB) high. Cleaning up...`);
       
       if (global.gc) {
         try { global.gc(); } catch (e) {}
       }
 
-      // If still over limit, recycle browser or restart
-      if (rssMB > MEMORY_LIMIT_MB + 20) {
-        addLog("[Memory] Emergency restart: Memory usage too high.");
+      // If significantly over limit, recycle browser immediately
+      if (rssMB > 450) {
+        addLog("[Memory] CRITICAL: Recycling browser to free memory.");
         if (aternosController && aternosController.browser) {
-          aternosController.browser.close().then(() => {
-            process.exit(1); // Exit and let process manager (like Render/PM2) restart us
-          });
-        } else {
-          process.exit(1);
+          aternosController.browser.close().catch(() => {});
         }
+      }
+
+      // Restart process if it hits the near-fatal limit
+      if (rssMB > 500) {
+        addLog("[Memory] FATAL: Process near 512MB limit. Restarting...");
+        process.exit(1); 
       }
     }
   },
-  2 * 60 * 1000, // Check every 2 minutes
+  60 * 1000, // Check every minute
 );
 
 // ============================================================

@@ -89,7 +89,7 @@ class AternosBrowser {
                 "--disable-breakpad",
                 "--disable-client-side-phishing-detection",
                 "--disable-features=Translate",
-                "--js-flags=--max-old-space-size=128 --expose-gc",
+                "--js-flags=--max-old-space-size=96 --expose-gc", // Reduced heap to 96MB
                 "--disable-canvas-aa",
                 "--disable-2d-canvas-clip-aa",
                 "--disable-gl-drawing-for-tests",
@@ -105,6 +105,7 @@ class AternosBrowser {
                 "--disable-offer-store-unmasked-wallet-cards",
                 "--disable-offer-upload-credit-cards",
                 "--disable-software-rasterizer",
+                "--disable-v8-idle-tasks",
               ],
             });
 
