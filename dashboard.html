@@ -595,7 +595,6 @@
 
         document.getElementById('players-count').textContent = data.playerCount || 0;
         const pl = data.playerData || [];
-        console.log(pl);
         document.getElementById('players-list').innerHTML = pl.length
           ? pl.slice(0,3).map(p => {
               const dimMap = { 'overworld': '🌳', 'nether': '🔥', 'end': '🌌', 'unknown': '' };
