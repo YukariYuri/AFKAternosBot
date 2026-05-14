@@ -22,7 +22,23 @@ if (IS_MINECRAFT_WORKER && process.send) {
     process.exit(1);
   });
 
-  const originalAddLog = addLog;
+// Global error handling for the worker to prevent fatal crashes
+if (IS_MINECRAFT_WORKER) {
+  process.on('uncaughtException', (err) => {
+    const msg = String(err.message || err);
+    console.error(`[Worker Uncaught] ${msg}`);
+    // If it's a network error, just trigger a reconnect if we aren't already
+    if (msg.includes('ETIMEDOUT') || msg.includes('ECONNRESET') || msg.includes('EPIPE')) {
+      if (typeof scheduleReconnect === 'function') scheduleReconnect();
+    }
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    console.error(`[Worker Unhandled Rejection] ${reason}`);
+  });
+}
+
+const originalAddLog = addLog;
   addLog = (line) => {
     // Only send to master, do not call originalAddLog (which prints to console)
     try {
@@ -789,12 +805,19 @@ function createBot() {
 
   try {
     // FIX: use version:false to auto-detect server version so the bot can join any server.
-    // If the user explicitly sets a version in settings.json it is still respected.
     let botVersion = false;
-    if (!forceAutoDetectVersion && config.server.version && config.server.version.trim() !== "") {
-      botVersion = config.server.version;
+    const cfgVersion = (config.server.version || "").trim();
+    
+    if (!forceAutoDetectVersion && cfgVersion !== "") {
+      // ONLY use the version if it looks like a standard Java version (e.g. 1.21, 1.20.1)
+      if (/^1\.\d+/.test(cfgVersion)) {
+        botVersion = cfgVersion;
+      } else {
+        addLog(`[Bot] Version "${cfgVersion}" looks like Bedrock/Custom. Forcing auto-detect.`);
+      }
     }
-    if (forceAutoDetectVersion) {
+    
+    if (forceAutoDetectVersion || botVersion === false) {
       addLog("[Bot] Using auto-detected version fallback.");
     }
     bot = mineflayer.createBot({
