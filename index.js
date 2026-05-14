@@ -842,12 +842,12 @@ function createBot() {
     clearBotTimeouts();
     connectionTimeoutId = setTimeout(() => {
       if (botRunning && !botState.connected) {
-        addLog("[Bot] Connection timeout - no spawn received within 120s.");
+        addLog("[Bot] Connection timeout - no spawn received within 300s.");
         isConnecting = false;
         notifyAternosToStart("connection-timeout");
         scheduleReconnect();
       }
-    }, 120000);
+    }, 300000);
 
     // FIX: guard against spawn firing twice (can happen on some servers)
     let spawnHandled = false;
