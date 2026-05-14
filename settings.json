@@ -8,9 +8,8 @@
   "server": {
     "ip": "AbsoluteSybau.aternos.me",
     "port": 61097,
-    "version": "",
+    "version": "1.21.11",
     "try-creative": false,
-    "software": "PaperMC"
   },
   "position": {
     "enabled": true,

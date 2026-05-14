@@ -214,10 +214,12 @@ let minecraftSnapshot = {
 function sendToMinecraftWorker(type, payload = {}) {
   if (!minecraftWorker || !minecraftWorker.connected) return false;
   minecraftWorker.send({ type, payload });
+  addLog(`[Worker] Sent ${type} to Minecraft worker.`);
   return true;
 }
 
-const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com"
+// const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com"
+const ATERNOS_SERVICE_URL = "http://localhost:5001"
 
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
   try {
@@ -236,6 +238,7 @@ async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
       }
     }, (res) => {
       // Success
+      addLog(`[AternosLink] Notified BotAternos: ${res.statusCode}`);
     });
     req.on("error", (e) => {
       addLog(`[AternosLink] Could not notify BotAternos: ${e.message}`);
@@ -771,13 +774,13 @@ function getReconnectDelay() {
 
 function createBot() {
   // FIX: Reload config from disk before every connection to get updated port/IP
-  try {
-    const freshConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
-    // Update the existing config object without replacing it to keep references
-    Object.assign(config, freshConfig);
-  } catch (e) {
-    addLog(`[Config] Failed to reload settings.json: ${e.message}`);
-  }
+  // try {
+  //   const freshConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
+  //   // Update the existing config object without replacing it to keep references
+  //   Object.assign(config, freshConfig);
+  // } catch (e) {
+  //   addLog(`[Config] Failed to reload settings.json: ${e.message}`);
+  // }
 
   if (!botRunning) {
     addLog("[Bot] Bot is stopped, skipping connect.");
@@ -813,7 +816,7 @@ function createBot() {
 
   try {
     // FIX: use version:false to auto-detect server version so the bot can join any server.
-    let botVersion = false;
+    let botVersion = "1.21.11";
     const cfgVersion = (config.server.version || "").trim();
     
     if (!forceAutoDetectVersion && cfgVersion !== "") {
@@ -839,6 +842,9 @@ function createBot() {
       hideErrors: true,
       checkTimeoutInterval: 60000, // Increase to 60s for maximum lag tolerance
     });
+
+    // console.log(bot);
+    // console.log(bot.version);
 
     // SPECTATOR MODE OPTIMIZATION: 
     // Since the bot is in spectator mode, physics (gravity, collision) are not needed.
