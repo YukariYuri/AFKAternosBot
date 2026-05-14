@@ -228,9 +228,13 @@ const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com";
 
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
   try {
-    const http = require("http");
+    const https = require("https"); // Use https for Render URLs
     const data = JSON.stringify({ reason });
-    const req = http.request(`${ATERNOS_SERVICE_URL}/aternos/start`, {
+    const url = new URL(`${ATERNOS_SERVICE_URL}/aternos/start`);
+    
+    const req = https.request({
+      hostname: url.hostname,
+      path: url.pathname,
       method: "POST",
       headers: {
         'Content-Type': 'application/json',
