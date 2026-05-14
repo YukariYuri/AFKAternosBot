@@ -804,9 +804,9 @@ function createBot() {
       host: config.server.ip,
       port: config.server.port,
       version: botVersion,
-      viewDistance: 'tiny', // Memory optimization
-      hideErrors: true, // Reduce log noise
-      checkTimeoutInterval: 45000, // Wait longer for Aternos packets
+      viewDistance: 'tiny',
+      hideErrors: true,
+      checkTimeoutInterval: 60000, // Increase to 60s for maximum lag tolerance
     });
 
     // SPECTATOR MODE OPTIMIZATION: 
