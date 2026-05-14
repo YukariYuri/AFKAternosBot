@@ -5,8 +5,11 @@
   "main": "index.js",
   "scripts": {
     "start": "node --max-old-space-size=128 index.js",
+    "start:split": "node --max-old-space-size=128 index.js",
+    "start:minecraft": "set BOTMINECRAFT_ROLE=minecraft&& set BOTMINECRAFT_SPLIT=false&& node --max-old-space-size=128 index.js",
+    "start:single": "set BOTMINECRAFT_SPLIT=false&& node --max-old-space-size=128 index.js",
     "test": "node --check index.js",
-    "postinstall": "npx puppeteer browsers install chrome && node scripts/prune-minecraft-data.js"
+    "postinstall": "node scripts/prune-minecraft-data.js"
   },
   "author": "Lamgerr",
   "license": "MIT",
@@ -15,10 +18,6 @@
     "express": "^4.18.1",
     "minecraft-data": "^3.103.0",
     "mineflayer": "^4.34.0",
-    "mineflayer-pathfinder": "^2.1.1",
-    "node-fetch": "^2.7.0",
-    "puppeteer": "^24.43.1",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "mineflayer-pathfinder": "^2.1.1"
   }
 }

@@ -1,566 +1,706 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <title>{{BOT_NAME}} Dashboard</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" media="print" onload="this.media='all'"
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    *,
-    *::before,
-    *::after {
-      box-sizing: border-box;
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface-2: #21242f;
+      --border: #2a2d3a;
+      --border-strong: #363a4a;
+
+      --accent: #4f8ef7;
+      --accent-light: rgba(79,142,247,0.12);
+      --accent-mid: rgba(79,142,247,0.25);
+
+      --success: #34d17a;
+      --success-light: rgba(52,209,122,0.1);
+      --success-mid: rgba(52,209,122,0.22);
+
+      --danger: #f26b6b;
+      --danger-light: rgba(242,107,107,0.1);
+      --danger-mid: rgba(242,107,107,0.22);
+
+      --warn: #f5a623;
+      --warn-light: rgba(245,166,35,0.1);
+
+      --purple: #a78bfa;
+      --purple-light: rgba(167,139,250,0.12);
+      --purple-mid: rgba(167,139,250,0.25);
+
+      --text: #e8eaf0;
+      --text-2: #c4c8d4;
+      --text-3: #7b8196;
+      --text-4: #4e5368;
+
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.2);
+      --radius: 14px;
+      --radius-sm: 8px;
+      --radius-xs: 6px;
     }
 
-    :root {
-      --bg: #0d1117;
-      --card-bg: rgba(22, 27, 34, 0.7);
-      --border: rgba(48, 54, 61, 0.8);
-      --accent: #58a6ff;
-      --success: #3fb950;
-      --warn: #d29922;
-      --error: #f85149;
-      --text: #c9d1d9;
-      --text-dim: #8b949e;
-    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: 'Inter', system-ui, sans-serif;
-      background: radial-gradient(circle at top right, #161b22, #0d1117);
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
       color: var(--text);
-      margin: 0;
-      padding: 32px 16px;
       min-height: 100vh;
-      line-height: 1.5;
+      padding: 32px 20px 48px;
+      display: flex;
+      justify-content: center;
     }
 
     .container {
       width: 100%;
-      max-width: 1300px;
-      margin: 0 auto;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 24px;
-    }
-
-    @media (max-width: 1000px) {
-      .container {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    header {
-      grid-column: 1 / -1;
-      margin-bottom: 32px;
-    }
-
-    header h1 {
-      font-size: 28px;
-      margin: 0;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      background: linear-gradient(90deg, #fff, #8b949e);
-      -webkit-background-clip: text;
-      background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    header p {
-      color: var(--text-dim);
-      margin: 4px 0 0;
-      font-size: 14px;
-    }
-
-    .status-section {
-      background: var(--card-bg);
-      backdrop-filter: blur(12px);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 24px;
-      display: flex;
-      align-items: center;
-      gap: 20px;
-      margin-bottom: 24px;
-      transition: all 0.3s ease;
-    }
-
-    .status-section.online {
-      border-color: rgba(63, 185, 80, 0.3);
-      box-shadow: 0 8px 32px rgba(63, 185, 80, 0.1);
-    }
-
-    .status-icon {
-      width: 56px;
-      height: 56px;
-      border-radius: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 24px;
-      flex-shrink: 0;
-    }
-
-    .status-icon.online {
-      background: rgba(63, 185, 80, 0.15);
-      color: var(--success);
-    }
-
-    .status-icon.offline {
-      background: rgba(248, 81, 73, 0.15);
-      color: var(--error);
-    }
-
-    .status-label {
-      font-size: 20px;
-      font-weight: 700;
-    }
-
-    .status-detail {
-      font-size: 13px;
-      color: var(--text-dim);
-      margin-top: 2px;
-    }
-
-    dl {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-      margin: 0;
-      align-items: stretch;
-    }
-
-    .stat-card {
-      background: var(--card-bg);
-      backdrop-filter: blur(8px);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 20px;
+      max-width: 1200px;
       display: flex;
       flex-direction: column;
+      gap: 20px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: flex-end;
       justify-content: space-between;
-      min-height: 120px;
-      transition: transform 0.2s ease, border-color 0.2s ease;
+      padding-bottom: 4px;
     }
 
-    .stat-card:hover {
-      transform: translateY(-2px);
-      border-color: var(--accent);
+    .header-left h1 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: var(--text);
     }
 
-    .stat-card dt {
+    .header-left p {
+      font-size: 14px;
+      color: var(--text-3);
+      margin-top: 3px;
+    }
+
+    .header-badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-3);
+      letter-spacing: 0.2px;
+    }
+
+    /* ── Status Banner ── */
+    .status-banner {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 22px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      box-shadow: var(--shadow);
+      transition: border-color 0.3s;
+    }
+
+    .status-banner.online { border-left: 3px solid var(--success); }
+    .status-banner.offline { border-left: 3px solid var(--border-strong); }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.online {
+      background: var(--success);
+      box-shadow: 0 0 0 3px var(--success-mid);
+      animation: pulse 2.2s infinite;
+    }
+    .status-dot.offline { background: var(--text-4); box-shadow: 0 0 0 3px var(--border); }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 3px var(--success-mid); }
+      50% { box-shadow: 0 0 0 6px rgba(22,163,74,0.12); }
+    }
+
+    .status-text h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .status-text p {
+      font-size: 13px;
+      color: var(--text-3);
+      margin-top: 1px;
+    }
+
+    /* ── Main Grid ── */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.25fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    @media (max-width: 920px) { .main-grid { grid-template-columns: 1fr; } }
+
+    .left-col { display: flex; flex-direction: column; gap: 16px; }
+
+    /* ── Card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .card-header {
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-header h3 {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-3);
+    }
+
+    /* ── Stats Grid ── */
+    .stats-inner {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+    }
+
+    .stat-cell {
+      padding: 16px 20px;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    .stat-cell:hover { background: var(--surface-2); }
+
+    .stat-cell:nth-child(even) { border-right: none; }
+    .stat-cell:nth-last-child(-n+2) { border-bottom: none; }
+
+    .stat-label {
       font-size: 11px;
       font-weight: 600;
       text-transform: uppercase;
-      color: var(--text-dim);
-      letter-spacing: 0.5px;
+      letter-spacing: 0.6px;
+      color: var(--text-4);
+      margin-bottom: 6px;
     }
 
-    .stat-card dd {
-      font-size: 18px;
+    .stat-value {
+      font-size: 20px;
       font-weight: 700;
-      margin: 8px 0;
-      color: #fff;
+      color: var(--text);
+      letter-spacing: -0.3px;
+      line-height: 1;
     }
 
-    .stat-card .stat-detail {
-      font-size: 11px;
-      color: #484f58;
-      margin: 0;
+    .stat-sub {
+      font-size: 12px;
+      color: var(--text-3);
+      margin-top: 4px;
     }
 
-    .stat-card.full-width {
-      grid-column: 1 / -1;
+    /* ── Server Info ── */
+    .server-info {
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
 
-    .log-column {
-      background: var(--card-bg);
-      backdrop-filter: blur(12px);
+    .server-addr {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .server-port {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--text-3);
+      background: var(--surface-2);
       border: 1px solid var(--border);
-      border-radius: 20px;
+      padding: 3px 8px;
+      border-radius: var(--radius-xs);
+    }
+
+    /* ── Controls ── */
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .btn {
+      padding: 14px 18px;
+      border-radius: var(--radius-sm);
+      border: 1.5px solid transparent;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.18s ease;
+      letter-spacing: 0.1px;
+    }
+
+    .btn-start {
+      background: var(--success-light);
+      color: var(--success);
+      border-color: var(--success-mid);
+    }
+    .btn-start:hover {
+      background: var(--success);
+      color: #fff;
+      border-color: var(--success);
+      box-shadow: 0 4px 12px rgba(22,163,74,0.25);
+      transform: translateY(-1px);
+    }
+
+    .btn-stop {
+      background: var(--danger-light);
+      color: var(--danger);
+      border-color: var(--danger-mid);
+    }
+    .btn-stop:hover {
+      background: var(--danger);
+      color: #fff;
+      border-color: var(--danger);
+      box-shadow: 0 4px 12px rgba(220,38,38,0.22);
+      transform: translateY(-1px);
+    }
+
+    .btn:active { transform: translateY(0) scale(0.98); }
+
+    /* ── Player List Table ── */
+    .player-list-table {
+      padding: 0;
+    }
+    .player-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .player-row:last-child { border-bottom: none; }
+    .player-name-wrapper { display: flex; align-items: center; gap: 10px; }
+    .player-name { font-size: 14px; font-weight: 600; color: var(--text); }
+    .player-dim-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dim-ow { color: var(--success); }
+    .dim-ne { color: var(--danger); }
+    .dim-en { color: var(--purple); }
+
+    .btn-icon {
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ── Log Panel ── */
+    .log-panel {
       display: flex;
       flex-direction: column;
-      overflow: hidden;
-      height: 600px;
+      height: 680px;
     }
 
-    .log-header {
-      padding: 16px 24px;
-      background: rgba(22, 27, 34, 0.8);
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .log-panel .card-header {
+      flex-shrink: 0;
     }
 
-    .log-header h2 {
-      font-size: 15px;
-      margin: 0;
-      font-weight: 700;
-      color: #fff;
+    .log-count-badge {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-4);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      padding: 2px 8px;
+      border-radius: 999px;
     }
 
     .log-body {
       flex: 1;
-      padding: 0;
       overflow-y: auto;
-      font-family: 'JetBrains Mono', 'Fira Code', monospace;
-      font-size: 13px;
-      background: rgba(1, 4, 9, 0.4);
+      padding: 6px 0;
+      font-family: 'DM Mono', monospace;
+      font-size: 12.5px;
     }
 
-    .log-entry {
-      display: grid;
-      grid-template-columns: 80px 100px 1fr;
-      align-items: center;
-      padding: 8px 20px;
-      border-bottom: 1px solid rgba(48, 54, 61, 0.4);
-      transition: background 0.1s ease;
+    .log-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 7px 18px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.12s;
     }
 
-    .log-entry:hover {
-      background: rgba(255, 255, 255, 0.03);
-    }
+    .log-line:last-child { border-bottom: none; }
+    .log-line:hover { background: var(--surface-2); }
 
     .log-time {
-      color: #484f58;
-      font-size: 11px;
+      color: var(--text-4);
+      flex-shrink: 0;
+      font-size: 11.5px;
+      padding-top: 1px;
+      min-width: 68px;
     }
 
-    .log-badge {
+    .log-tag {
+      flex-shrink: 0;
       font-size: 10px;
-      font-weight: 800;
-      padding: 2px 8px;
-      border-radius: 6px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
       text-transform: uppercase;
-      text-align: center;
-      width: fit-content;
-      background: rgba(110, 118, 129, 0.1);
-      color: var(--text-dim);
+      padding: 2px 7px;
+      border-radius: 4px;
+      line-height: 1.5;
     }
 
-    .log-badge.bot { background: rgba(88, 166, 255, 0.15); color: #58a6ff; }
-    .log-badge.aternos { background: rgba(210, 153, 34, 0.15); color: #d29922; }
-    .log-badge.server { background: rgba(187, 128, 255, 0.15); color: #bc8cff; }
-    .log-badge.system { background: rgba(110, 118, 129, 0.15); color: #8b949e; }
-    .log-badge.aternosbrowser { background: rgba(255, 123, 114, 0.15); color: #ff7b72; font-size: 8px; }
+    .tag-bot     { background: var(--accent-light);  color: var(--accent); }
+    .tag-server  { background: var(--purple-light);  color: var(--purple); }
+    .tag-system  { background: var(--surface-2);     color: var(--text-3); border: 1px solid var(--border); }
 
-    .log-msg {
-      color: var(--text);
+    .log-text {
+      color: var(--text-2);
+      line-height: 1.5;
+      white-space: pre-wrap;
       word-break: break-word;
     }
 
-    .log-entry.error .log-msg { color: var(--error); }
-    .log-entry.warn .log-msg { color: var(--warn); }
-    .log-entry.success .log-msg { color: var(--success); }
+    .log-line.error .log-text  { color: var(--danger); }
+    .log-line.success .log-text { color: var(--success); }
+    .log-line.warn .log-text   { color: var(--warn); }
 
-    .controls {
-      display: flex;
-      gap: 12px;
-      margin-top: 24px;
-    }
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-4); }
 
-    button {
-      flex: 1;
-      padding: 14px;
-      border-radius: 12px;
-      border: none;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      font-size: 14px;
-    }
-
-    #start-btn {
-      background: var(--success);
-      color: #fff;
-      box-shadow: 0 4px 14px rgba(63, 185, 80, 0.3);
-    }
-
-    #stop-btn {
-      background: var(--error);
-      color: #fff;
-      box-shadow: 0 4px 14px rgba(248, 81, 73, 0.3);
-    }
-
-    button:hover { transform: scale(1.02); filter: brightness(1.1); }
-    button:active { transform: scale(0.98); }
-
-    footer { grid-column: 1 / -1; margin-top: 24px; text-align: center; }
-    footer p { font-size: 12px; color: #484f58; }
-
-    .status-column {
-      display: flex;
-      flex-direction: column;
-      gap: 24px;
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      color: var(--text-4);
+      font-size: 13px;
+      padding-top: 8px;
     }
   </style>
 </head>
 
 <body>
   <div class="container">
-    <header>
-      <h1>AFK Bot Dashboard</h1>
-      <p>Minecraft server bot &middot; Live status & logs</p>
-    </header>
 
-    <div class="status-column">
-      <section id="status-section" class="status-section offline">
-        <div id="status-icon" class="status-icon offline">&#x2717;</div>
-        <div>
-          <div id="status-label" class="status-label offline">Connecting…</div>
-          <div id="status-detail" class="status-detail">Establishing connection</div>
-        </div>
-      </section>
-
-      <dl>
-        <div class="stat-card">
-          <dt>Server Playtime</dt>
-          <dd id="uptime-text">—</dd>
-          <p class="stat-detail">Total ticks spent in server</p>
-        </div>
-        <div class="stat-card">
-          <dt>Coordinates</dt>
-          <dd id="coords-text">Searching…</dd>
-          <p class="stat-detail">Current position in-game</p>
-        </div>
-        <div class="stat-card">
-          <dt>Memory Usage</dt>
-          <dd id="memory-text">—</dd>
-          <p id="memory-avg-text" class="stat-detail">Average: — MB</p>
-        </div>
-        <div class="stat-card">
-          <dt>Aternos Status</dt>
-          <dd id="aternos-text">—</dd>
-          <p id="aternos-detail" class="stat-detail">Monitoring server state</p>
-        </div>
-        <div class="stat-card full-width">
-          <dt>Server address</dt>
-          <dd>{{SERVER_IP}}</dd>
-          <p class="stat-detail">Host: {{SERVER_IP}}:{{SERVER_PORT}}</p>
-        </div>
-      </dl>
-
-      <div class="controls">
-        <button id="start-btn" onclick="startBot()">Start bot</button>
-        <button id="stop-btn" onclick="stopBot()">Stop bot</button>
+    <!-- Header -->
+    <div class="header">
+      <div class="header-left">
+        <h1>{{BOT_NAME}}</h1>
+        <p>Autonomous Minecraft Agent · Dashboard</p>
       </div>
+      <div class="header-badge">Professional Edition</div>
+    </div>
 
-      <section class="status-section"
-        style="margin-top: 24px; flex-direction: column; align-items: flex-start; gap: 12px; background: rgba(255,255,255,0.03);">
-        <div style="font-size: 14px; font-weight: 700; color: var(--accent);">Aternos Login</div>
-        <p class="stat-detail" style="margin: 0;">Credentials are saved to .env for automatic login.</p>
-        <form id="aternos-login-form" style="display: grid; width: 100%; gap: 8px;">
-          <input type="text" id="aternos-user-input" autocomplete="username" placeholder="Aternos username or email"
-            style="background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: #fff; font-size: 12px;">
-          <input type="password" id="aternos-pass-input" autocomplete="current-password" placeholder="Aternos password"
-            style="background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: #fff; font-size: 12px;">
-          <label style="display: flex; align-items: center; gap: 8px; color: #8b949e; font-size: 11px;">
-            <input type="checkbox" id="aternos-remember-input" checked style="margin: 0;">
-            Remember credentials
-          </label>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <button id="aternos-login-btn" type="submit"
-              style="flex: 0 0 auto; padding: 7px 14px; font-size: 12px; background: var(--accent); border-radius: 6px;">Login
-              Aternos</button>
-            <button id="aternos-google-btn" type="button"
-              style="flex: 0 0 auto; padding: 7px 14px; font-size: 12px; background: #fff; color: #24292f; border-radius: 6px;">Google</button>
-            <span id="aternos-login-status" class="stat-detail" style="font-size: 11px; margin: 0;"></span>
+    <!-- Status Banner -->
+    <div id="status-banner" class="status-banner offline">
+      <div id="status-dot" class="status-dot offline"></div>
+      <div class="status-text">
+        <h2 id="status-label">Disconnected</h2>
+        <p id="status-detail">Initializing system protocols...</p>
+      </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="main-grid">
+
+      <!-- Left Column -->
+      <div class="left-col">
+
+        <!-- Stats Card -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Live Metrics</h3>
           </div>
-        </form>
-        <div style="width: 100%; display: grid; gap: 8px; margin-top: 4px;">
-          <textarea id="aternos-cookie-input" rows="1"
-            placeholder="Paste ATERNOS_SESSION here"
-            style="width: 100%; resize: vertical; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; color: #fff; font-size: 12px;"></textarea>
-          <button id="aternos-cookie-btn" type="button"
-              style="padding: 7px 14px; font-size: 12px; background: var(--success); border-radius: 6px;">Update Cookie</button>
+          <div class="stats-inner">
+            <div class="stat-cell">
+              <div class="stat-label">Total Playtime</div>
+              <div id="uptime-text" class="stat-value">—</div>
+              <div class="stat-sub">Accumulated Ticks</div>
+            </div>
+            <div class="stat-cell">
+              <div class="stat-label">Players Online</div>
+              <div id="players-count" class="stat-value">0</div>
+              <div id="players-list" class="stat-sub">None</div>
+            </div>
+            <div class="stat-cell">
+              <div class="stat-label">World Time</div>
+              <div id="world-time" class="stat-value">—</div>
+              <div id="world-day" class="stat-sub">Day 0</div>
+            </div>
+            <div class="stat-cell">
+              <div class="stat-label">Atmosphere</div>
+              <div id="weather-text" class="stat-value">—</div>
+              <div id="weather-detail" class="stat-sub">Updating...</div>
+            </div>
+            <div class="stat-cell">
+              <div class="stat-label">Current World</div>
+              <div id="dimension-text" class="stat-value">—</div>
+              <div id="dimension-detail" class="stat-sub">Dimension</div>
+            </div>
+            <div class="stat-cell">
+              <div class="stat-label">Location</div>
+              <div id="coords-text" class="stat-value" style="font-family:'DM Mono',monospace;font-size:14px">0, 0, 0</div>
+              <div class="stat-sub">Coordinates</div>
+            </div>
+            <div class="stat-cell">
+              <div class="stat-label">Memory Usage</div>
+              <div id="memory-text" class="stat-value">0.00 MB</div>
+              <div id="memory-avg-text" class="stat-sub">Avg: 0.00 MB</div>
+            </div>
+          </div>
         </div>
-      </section>
 
-      <footer>
-        <p>AFK Bot &middot; <a href="/tutorial" style="color: inherit;">Setup guide</a></p>
-      </footer>
+        <!-- Server Card -->
+        <div class="card">
+          <div class="card-header"><h3>Server</h3></div>
+          <div class="server-info">
+            <div>
+              <div class="stat-label" style="margin-bottom:4px">Address</div>
+              <div class="server-addr">{{SERVER_IP}}</div>
+            </div>
+            <span class="server-port">:{{SERVER_PORT}}</span>
+          </div>
+        </div>
+
+        <!-- Players List Card -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Player List</h3>
+            <span id="player-count-detailed" class="log-count-badge">0 online</span>
+          </div>
+          <div id="detailed-player-list" class="player-list-table">
+            <!-- populated by JS -->
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+          <button class="btn btn-start" onclick="startBot()">
+            <span class="btn-icon">
+              <svg width="13" height="14" viewBox="0 0 13 14" fill="none"><path d="M1 1.5L12 7L1 12.5V1.5Z" fill="currentColor"/></svg>
+            </span>
+            Start Bot
+          </button>
+          <button class="btn btn-stop" onclick="stopBot()">
+            <span class="btn-icon">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="1" y="1" width="10" height="10" rx="1.5" fill="currentColor"/></svg>
+            </span>
+            Stop Bot
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Log Panel -->
+      <div class="card log-panel">
+        <div class="card-header">
+          <h3>Activity Log</h3>
+          <span id="log-count" class="log-count-badge">0 events</span>
+        </div>
+        <div id="log-body" class="log-body">
+          <!-- populated by JS -->
+        </div>
+      </div>
+
     </div>
 
-    <div class="log-column">
-      <div class="log-header">
-        <h2>Live Logs</h2>
-        <span id="log-count" style="font-size: 12px; color: #484f58;">0 entries</span>
-      </div>
-      <div id="log-body" class="log-body">
-        <!-- Logs will be inserted here -->
-      </div>
-    </div>
+    <footer>&copy; 2026 AFK Aternos Bot</footer>
   </div>
 
   <script>
     function escapeHTML(str) {
       if (!str) return '';
-      return str.replace(/[&<>"']/g, function (m) {
-        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
-      });
+      return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
     }
 
     function formatUptime(ticks) {
-      const totalSeconds = Math.floor((ticks || 0) / 20);
-      if (totalSeconds <= 0) return '0s';
-      let seconds = totalSeconds;
-      const d = Math.floor(seconds / (3600 * 24));
-      seconds %= (3600 * 24);
-      const h = Math.floor(seconds / 3600);
-      seconds %= 3600;
-      const m = Math.floor(seconds / 60);
-      const s = seconds % 60;
-      let parts = [];
-      if (d > 0) parts.push(d + 'd');
-      if (h > 0) parts.push(h + 'h');
-      if (m > 0) parts.push(m + 'm');
-      if (s > 0 || parts.length === 0) parts.push(s + 's');
-      return parts.join(' ');
+      const s = Math.floor((ticks || 0) / 20);
+      if (s <= 0) return '0s';
+      const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+      const m = Math.floor((s % 3600) / 60), sec = s % 60;
+      return [d && d+'d', h && h+'h', m && m+'m', (sec || !d && !h && !m) && sec+'s'].filter(Boolean).join(' ');
     }
 
     async function update() {
       try {
-        const response = await fetch('/health');
-        if (!response.ok) throw new Error('Fetch failed');
-        const data = await response.json();
-
+        const res = await fetch('/health');
+        if (!res.ok) throw new Error();
+        const data = await res.json();
         const online = data.status === 'connected';
-        const section = document.getElementById('status-section');
-        const icon = document.getElementById('status-icon');
+
+        const banner = document.getElementById('status-banner');
+        const dot = document.getElementById('status-dot');
         const label = document.getElementById('status-label');
         const detail = document.getElementById('status-detail');
 
-        if (section) section.className = 'status-section ' + (online ? 'online' : 'offline');
-        if (icon) {
-            icon.className = 'status-icon ' + (online ? 'online' : 'offline');
-            icon.textContent = online ? '✓' : '✗';
-        }
-        if (label) {
-            label.className = 'status-label ' + (online ? 'online' : 'offline');
-            label.textContent = online ? 'Connected' : 'Disconnected';
-        }
-        if (detail) detail.textContent = online ? 'Bot is active on the server' : (data.aternos?.status?.label || 'Monitoring Aternos...');
+        banner.className = 'status-banner ' + (online ? 'online' : 'offline');
+        dot.className = 'status-dot ' + (online ? 'online' : 'offline');
+        label.textContent = online ? 'System Active' : 'System Standby';
+        detail.textContent = online ? 'Bot is connected to the world' : 'Waiting for Minecraft handshake...';
 
-        const uptimeEl = document.getElementById('uptime-text');
-        if (uptimeEl) uptimeEl.textContent = formatUptime(data.uptime);
-        
-        const memoryEl = document.getElementById('memory-text');
-        if (memoryEl) memoryEl.textContent = (data.memoryUsage || 0).toFixed(2) + ' MB';
-        
-        const memoryAvgEl = document.getElementById('memory-avg-text');
-        if (memoryAvgEl) memoryAvgEl.textContent = 'Average: ' + (data.avgMemory || 0).toFixed(2) + ' MB';
+        document.getElementById('uptime-text').textContent = formatUptime(data.uptime);
+        document.getElementById('memory-text').textContent = (data.memoryUsage||0).toFixed(2)+' MB';
+        document.getElementById('memory-avg-text').textContent = 'Avg: '+(data.avgMemory||0).toFixed(2)+' MB';
 
-        if (data.aternos) {
-          const s = data.aternos.status;
-          const aternosTextEl = document.getElementById('aternos-text');
-          if (aternosTextEl) aternosTextEl.textContent = s ? (s.label || s.class || 'Error') : 'Wait...';
-          const aternosDetailEl = document.getElementById('aternos-detail');
-          if (aternosDetailEl) aternosDetailEl.textContent = data.aternos.running ? 'Monitor Active' : 'Monitor Idle';
+        const coords = data.coords;
+        document.getElementById('coords-text').textContent = coords
+          ? `${Math.floor(coords.x)}, ${Math.floor(coords.y)}, ${Math.floor(coords.z)}`
+          : 'Unknown';
+
+        document.getElementById('players-count').textContent = data.playerCount || 0;
+        const pl = data.playerData || [];
+        console.log(pl);
+        document.getElementById('players-list').innerHTML = pl.length
+          ? pl.slice(0,3).map(p => {
+              const dimMap = { 'overworld': '🌳', 'nether': '🔥', 'end': '🌌', 'unknown': '' };
+              const dimIcon = dimMap[p.dimension] || '';
+              return `${p.nearby ? '📍 ' : ''}${p.name} ${dimIcon}`;
+            }).join(', ') + (pl.length>3?'…':'')
+          : 'None';
+        document.getElementById('players-list').title = pl.map(p => {
+          const d = p.dimension ? p.dimension.toUpperCase() : 'UNKNOWN';
+          return `${p.nearby ? '[NEARBY] ' : ''}${p.name} (${d})`;
+        }).join('\n') || 'No players';
+
+        // Populate Detailed Player List
+        const detailedListEl = document.getElementById('detailed-player-list');
+        const detailedCountEl = document.getElementById('player-count-detailed');
+        if (detailedListEl && detailedCountEl) {
+          detailedCountEl.textContent = pl.length + ' online';
+          if (pl.length === 0) {
+            detailedListEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-4);font-size:13px">No players discovered</div>';
+          } else {
+            detailedListEl.innerHTML = pl.map(p => {
+              const d = p.dimension || 'unknown';
+              const dimMap = { 
+                'overworld': { icon: '🌳', label: 'Overworld', cls: 'dim-ow' }, 
+                'nether': { icon: '🔥', label: 'Nether', cls: 'dim-ne' }, 
+                'end': { icon: '🌌', label: 'The End', cls: 'dim-en' },
+                'unknown': { icon: '❓', label: 'Unknown', cls: '' }
+              };
+              const dInfo = dimMap[d] || dimMap.unknown;
+              return `
+                <div class="player-row">
+                  <div class="player-name-wrapper">
+                    <span style="font-size:14px">${p.nearby ? '📍' : ''}</span>
+                    <span class="player-name">${p.name}</span>
+                  </div>
+                  <div class="player-dim-badge ${dInfo.cls}">
+                    <span>${dInfo.icon}</span>
+                    <span>${dInfo.label}</span>
+                  </div>
+                </div>
+              `;
+            }).join('');
+          }
         }
 
-        const coordsEl = document.getElementById('coords-text');
-        if (coordsEl) {
-            if (data.coords) {
-              const x = Math.floor(data.coords.x);
-              const y = Math.floor(data.coords.y);
-              const z = Math.floor(data.coords.z);
-              coordsEl.textContent = 'X ' + x + ', Y ' + y + ', Z ' + z;
-            } else {
-              coordsEl.textContent = online ? 'Loading...' : 'Searching…';
-            }
+        const dimEl = document.getElementById('dimension-text');
+        const dimDetail = document.getElementById('dimension-detail');
+        if (dimEl) {
+          const d = data.dimension || 'overworld';
+          dimEl.textContent = d.charAt(0).toUpperCase() + d.slice(1);
+          if (dimDetail) {
+            if (d === 'nether') { dimEl.style.color = 'var(--danger)'; dimDetail.textContent = '🔥 The Nether'; }
+            else if (d === 'end') { dimEl.style.color = 'var(--purple)'; dimDetail.textContent = '🌌 The End'; }
+            else { dimEl.style.color = 'var(--success)'; dimDetail.textContent = '🌳 Overworld'; }
+          }
         }
+        const worldTimeEl = document.getElementById('world-time');
+        if (worldTimeEl) {
+          worldTimeEl.textContent = data.worldTime || '—';
+          const hour = parseInt((data.worldTime || '00:').split(':')[0]);
+          const isNight = hour >= 19 || hour < 6;
+          worldTimeEl.style.color = isNight ? '#7b8196' : '#f5a623';
+        }
+        document.getElementById('world-day').textContent = 'Cycle Day '+(data.worldDay||0);
+
+        const wEl = document.getElementById('weather-text');
+        const wD = document.getElementById('weather-detail');
+        const w = data.weather || '—';
+        wEl.textContent = w;
+        wEl.style.color = '';
+        if (w === 'Storming') { wEl.style.color = 'var(--danger)'; wD.textContent = '⚡ Severe Thunderstorm'; }
+        else if (w === 'Raining') { wEl.style.color = 'var(--accent)'; wD.textContent = '🌧 Precipitation active'; }
+        else { wEl.style.color = 'var(--success)'; wD.textContent = '☀️ Clear conditions'; }
 
         if (data.logs) {
           const logBody = document.getElementById('log-body');
-          const logCount = document.getElementById('log-count');
-          if (logCount) logCount.textContent = data.logs.length + ' entries';
-          if (logBody) {
-              const html = data.logs.map(l => {
-                if (!l || typeof l !== 'string') return '';
-                const parts = l.split('|');
-                const time = parts[0] || '';
-                const catRaw = (parts[1] || 'System');
-                const cat = catRaw.toLowerCase();
-                const msg = parts.slice(2).join('|') || '';
-                const escaped = escapeHTML(msg);
-                const lower = msg.toLowerCase();
-                let cls = '';
-                if (lower.includes('error') || lower.includes('fail') || lower.includes('missing') || lower.includes('not found')) cls = 'error';
-                else if (lower.includes('warn') || lower.includes('stuck') || lower.includes('reloading')) cls = 'warn';
-                else if (lower.includes('connect') || lower.includes('join') || lower.includes('spawn') || lower.includes('success') || lower.includes('online')) cls = 'success';
-                const badgeClass = cat.replace(/[^a-z]/g, '');
-                return '<div class="log-entry ' + cls + '">' +
-                  '<span class="log-time">' + time + '</span>' +
-                  '<span class="log-badge ' + badgeClass + '">' + catRaw + '</span>' +
-                  '<span class="log-msg">' + escaped + '</span>' +
-                  '</div>';
-              }).join('');
-              const isAtBottom = logBody.scrollHeight - logBody.clientHeight <= logBody.scrollTop + 200;
-              logBody.innerHTML = html;
-              if (isAtBottom) logBody.scrollTop = logBody.scrollHeight;
-          }
+          document.getElementById('log-count').textContent = data.logs.length+' events';
+          const atBottom = logBody.scrollHeight - logBody.clientHeight <= logBody.scrollTop + 80;
+
+          logBody.innerHTML = data.logs.map(l => {
+            const parts = l.split('|');
+            const time = parts[0]||'';
+            const cat = (parts[1]||'System').trim();
+            const msg = parts.slice(2).join('|')||'';
+            const lower = msg.toLowerCase();
+            let cls = lower.includes('error')||lower.includes('fail') ? 'error'
+                    : lower.includes('warn') ? 'warn'
+                    : lower.includes('success')||lower.includes('spawn') ? 'success' : '';
+            const tagCls = 'tag-'+cat.toLowerCase().replace(/[^a-z]/g,'');
+            return `<div class="log-line ${cls}">
+              <span class="log-time">${escapeHTML(time)}</span>
+              <span class="log-tag ${tagCls}">${escapeHTML(cat)}</span>
+              <span class="log-text">${escapeHTML(msg)}</span>
+            </div>`;
+          }).join('');
+
+          if (atBottom) logBody.scrollTop = logBody.scrollHeight;
         }
-      } catch (e) {
-        const label = document.getElementById('status-label');
-        if (label) label.textContent = 'Unreachable';
+      } catch {
+        document.getElementById('status-label').textContent = 'Offline (Sync Error)';
       }
     }
 
-    async function startBot() {
-      await fetch('/start', { method: 'POST' }).catch(() => {});
-      update();
-    }
-
-    async function stopBot() {
-      await fetch('/stop', { method: 'POST' }).catch(() => {});
-      update();
-    }
-
-    const aternosLoginForm = document.getElementById('aternos-login-form');
-    if (aternosLoginForm) {
-      aternosLoginForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const usernameInput = document.getElementById('aternos-user-input');
-        const passwordInput = document.getElementById('aternos-pass-input');
-        const rememberInput = document.getElementById('aternos-remember-input');
-        const status = document.getElementById('aternos-login-status');
-        const username = usernameInput.value.trim();
-        const password = passwordInput.value;
-        if (!username || !password) return;
-        status.textContent = 'Logging in...';
-        try {
-          const r = await fetch('/aternos/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password, remember: rememberInput.checked })
-          });
-          const data = await r.json();
-          status.textContent = data.success ? 'Success!' : (data.error || 'Failed.');
-          if (data.success) { passwordInput.value = ''; setTimeout(update, 2000); }
-        } catch (err) { status.textContent = 'Error.'; }
-      });
-
-      document.getElementById('aternos-google-btn').addEventListener('click', async () => {
-          document.getElementById('aternos-login-status').textContent = 'Check window...';
-          fetch('/aternos/google/start', { method: 'POST' }).catch(() => {});
-      });
-
-      document.getElementById('aternos-cookie-btn').addEventListener('click', async () => {
-          const input = document.getElementById('aternos-cookie-input');
-          const cookieString = input.value.trim();
-          if (!cookieString) return;
-          const r = await fetch('/aternos/cookie', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ cookieString, remember: true })
-          });
-          const data = await r.json();
-          document.getElementById('aternos-login-status').textContent = data.success ? 'Cookie updated!' : 'Failed.';
-          if (data.success) input.value = '';
-      });
-    }
+    async function startBot() { await fetch('/start',{method:'POST'}).catch(()=>{}); update(); }
+    async function stopBot()  { await fetch('/stop', {method:'POST'}).catch(()=>{}); update(); }
 
     update();
     setInterval(update, 5000);

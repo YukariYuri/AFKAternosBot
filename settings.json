@@ -11,24 +11,6 @@
     "version": "1.21.11",
     "try-creative": false
   },
-  "aternos": {
-    "auto-start": {
-      "enabled": true,
-      "useBrowser": true,
-      "headless": true,
-      "pollInterval": 10000,
-      "offlineStartDelay": 10000,
-      "connectAfterOnlineDelay": 15000,
-      "confirmStatuses": [
-        "queue",
-        "confirm",
-        "confirming"
-      ],
-      "readyStatuses": [
-        "online"
-      ]
-    }
-  },
   "position": {
     "enabled": true,
     "x": 0,

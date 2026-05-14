@@ -1,30 +1,26 @@
 "use strict";
 
-// Load .env FIRST so ATERNOS_SESSION / ATERNOS_AJAX_TOKEN env vars are available
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 
-function isDetachedFrameError(reason) {
-  const msg = String(reason && reason.message ? reason.message : reason);
-  return (
-    msg.includes("Attempted to use detached Frame") ||
-    msg.includes("Execution context was destroyed") ||
-    msg.includes("Cannot find context with specified id") ||
-    msg.includes("Target closed") ||
-    msg.includes("Page crashed")
-  );
+const IS_MINECRAFT_WORKER = process.env.BOTMINECRAFT_ROLE === "minecraft";
+
+if (IS_MINECRAFT_WORKER) {
+  console.log(`[System] Worker starting... CWD: ${process.cwd()} DIR: ${__dirname}`);
 }
 
-// Prevent fatal crashes from Puppeteer race conditions (Detached Frames, etc.)
-process.on('unhandledRejection', (reason, promise) => {
-  if (isDetachedFrameError(reason)) {
-    return;
-  }
-  const { addLog } = require("./logger");
-  addLog(`[FATAL] Unhandled Rejection: ${reason}`);
-});
+let { addLog, getLogs } = require("./logger");
 
+// FIX: Prevent worker from logging locally to console.
+// Worker logs will only be printed by the master process to avoid visual duplication.
+if (IS_MINECRAFT_WORKER && process.send) {
+  const originalAddLog = addLog;
+  addLog = (line) => {
+    // Only send to master, do not call originalAddLog (which prints to console)
+    process.send({ type: "log", payload: { line } });
+  };
+}
 
-const { addLog, getLogs } = require("./logger");
 const mineflayer = require("mineflayer");
 const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
 const { GoalBlock } = goals;
@@ -33,26 +29,30 @@ const express = require("express");
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
-const AternosController = require("./aternosController");
+const { fork } = require("child_process");
+
+const USE_SPLIT_MINECRAFT = !IS_MINECRAFT_WORKER && process.env.BOTMINECRAFT_SPLIT !== "false";
 
 // ============================================================
-// EXPRESS SERVER - Keep Render/Aternos alive
+// EXPRESS SERVER - Keep Render alive
 // ============================================================
 const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 5000;
 
 // Stats tracking (Persistent)
-let stats = { totalPlaytime: 0 };
+let stats = { totalPlaytime: 8452976 };
 let memoryStats = {
   totalHeapUsed: 0,
   samples: 0,
   avgHeapUsed: 0
 };
 
+const statsPath = path.join(__dirname, "stats.json");
+
 try {
-  if (fs.existsSync("./stats.json")) {
-    stats = JSON.parse(fs.readFileSync("./stats.json", "utf8"));
+  if (fs.existsSync(statsPath)) {
+    stats = JSON.parse(fs.readFileSync(statsPath, "utf8"));
     // Migration: Set unit to ticks if not already done
     if (!stats.unit || stats.unit !== 'ticks') {
       stats.unit = 'ticks';
@@ -68,7 +68,7 @@ try {
 
 function saveStats() {
   try {
-    fs.writeFileSync("./stats.json", JSON.stringify(stats, null, 2));
+    fs.writeFileSync(statsPath, JSON.stringify(stats, null, 2));
   } catch (e) {
     // Ignore save errors
   }
@@ -97,10 +97,49 @@ setInterval(() => {
   memoryStats.avgHeapUsed = memoryStats.totalHeapUsed / memoryStats.samples;
 
   if (botState.connected) {
-    stats.totalPlaytime += 200; // Increment by 200 ticks (approx 10 seconds)
-    if (stats.totalPlaytime % 600 === 0) saveStats();
+    // Note: totalPlaytime is now synced with in-game age delta below
   }
-}, 10000); // Increased interval to 10s to reduce CPU/Memory churn
+  
+  // Master process only: sync stats from worker updates
+  // The actual incrementing happens in the IPC handler below
+
+  // Only run bot-specific logic if we actually have a bot instance in THIS process
+  if (bot) {
+    const pData = bot.players ? Object.values(bot.players).map(p => {
+      // Deep search helper to find keywords in any object structure
+      const findDim = (obj) => {
+        const str = JSON.stringify(obj).toLowerCase();
+        if (str.includes("overworld")) return "overworld";
+        if (str.includes("nether")) return "nether";
+        if (str.includes("end")) return "end";
+        return null;
+      };
+
+      const pDim = findDim(p) || "unknown";
+      
+      return {
+        name: p.username,
+        nearby: !!p.entity,
+        dimension: pDim
+      };
+    }) : [];
+    botState.playerCount = pData.length;
+    botState.playerData = pData;
+    botState.weather = bot.isThundering ? "Storming" : bot.isRaining ? "Raining" : "Clear";
+    botState.dimension = bot.game ? bot.game.dimension : "overworld";
+    botState.uptime = Number(stats.totalPlaytime || 0);
+    
+    if (bot.time) {
+      const totalTicks = bot.time.timeOfDay;
+      const hours = Math.floor((totalTicks / 1000 + 6) % 24);
+      const minutes = Math.floor((totalTicks % 1000) * 60 / 1000);
+      botState.worldTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+      botState.worldDay = bot.time.day;
+    }
+    if (bot.entity && bot.entity.position) botState.coords = bot.entity.position;
+  }
+},
+  10000); // Increased interval to 10s to reduce CPU/Memory churn
 
 // Also save stats on exit
 process.on("SIGINT", () => {
@@ -122,7 +161,7 @@ const templateFiles = ["dashboard.html", "tutorial.html", "logs.html"];
 
 templateFiles.forEach(f => {
   try {
-    templates[f] = fs.readFileSync(`./${f}`, "utf8");
+    templates[f] = fs.readFileSync(path.join(__dirname, f), "utf8");
   } catch (e) {
     addLog(`[Server] Warning: ${f} not found.`);
   }
@@ -139,232 +178,146 @@ function getTemplate(name) {
     .replace(/{{SERVER_PORT}}/g, config.server.port);
 }
 
-function updateEnvValues(values) {
-  const envPath = "./.env";
-  let envContent = "";
-
-  if (fs.existsSync(envPath)) {
-    envContent = fs.readFileSync(envPath, "utf8");
-  }
-
-  Object.entries(values).forEach(([key, value]) => {
-    if (!value) return;
-    const envValue = String(value);
-    const regex = new RegExp(`^${key}=.*`, "m");
-    if (regex.test(envContent)) {
-      envContent = envContent.replace(regex, `${key}=${envValue}`);
-    } else {
-      envContent += `${envContent.endsWith("\n") || envContent.length === 0 ? "" : "\n"}${key}=${envValue}`;
-    }
-    process.env[key] = value;
-  });
-
-  fs.writeFileSync(envPath, envContent.trim() + "\n");
-}
-
 // Web Endpoints
 app.get('/', (req, res) => res.send(getTemplate("dashboard.html")));
-app.get('/tutorial', (req, res) => res.send(getTemplate("tutorial.html")));
 app.get('/logs', (req, res) => res.send(getTemplate("logs.html")));
 
 app.get("/health", (req, res) => {
+  const splitState = USE_SPLIT_MINECRAFT ? minecraftSnapshot : null;
+  const state = splitState || botState;
+  
   res.json({
-    status: botState.connected ? "connected" : "disconnected",
-    uptime: stats.totalPlaytime,
+    status: state.connected ? "connected" : "disconnected",
+    uptime: Number(stats.totalPlaytime || 0),
     logs: getLogs(),
-    coords: bot && bot.entity ? bot.entity.position : null,
-    lastActivity: botState.lastActivity,
-    reconnectAttempts: botState.reconnectAttempts,
-    aternos: aternosController ? aternosController.getPublicState() : null,
+    coords: state.coords,
+    lastActivity: state.lastActivity,
+    reconnectAttempts: state.reconnectAttempts,
     memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
     avgMemory: memoryStats.avgHeapUsed,
+    // Enhanced World Data
+    playerCount: state.playerCount || 0,
+    playerData: state.playerData || [],
+    weather: state.weather || "Unknown",
+    dimension: state.dimension || "overworld",
+    worldTime: state.worldTime || "Unknown",
+    worldDay: state.worldDay || 0
   });
 });
 
 app.get("/ping", (req, res) => res.send("pong"));
 
-// Aternos Browser Remote Control (with 1s cache to save RAM)
-let screenshotCache = { data: null, time: 0 };
-// SCREENSHOT ENDPOINT REMOVED (Monitor removed)
-app.get("/aternos/screenshot", async (req, res) => {
-  res.status(410).send("Browser monitor is disabled for performance.");
-});
 
-app.post("/aternos/session", async (req, res) => {
-  const { session } = req.body;
-  if (!session) return res.status(400).json({ success: false, error: "No session provided" });
+let botRunning = false;
+let isConnecting = false;
+let minecraftWorker = null;
+let minecraftSnapshot = {
+  bot: null,
+  connected: false,
+  reconnecting: false,
+  coords: null,
+};
 
+function sendToMinecraftWorker(type, payload = {}) {
+  if (!minecraftWorker || !minecraftWorker.connected) return false;
+  minecraftWorker.send({ type, payload });
+  return true;
+}
+
+const ATERNOS_SERVICE_URL = "http://localhost:5001";
+
+async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
   try {
-    updateEnvValues({ ATERNOS_SESSION: session });
-    if (aternosController && aternosController.browser) {
-      await aternosController.browser.close(); // Restart browser with new cookie
-    }
-    addLog(`[Aternos] Session updated manually via dashboard.`);
-    res.json({ success: true });
+    const http = require("http");
+    const data = JSON.stringify({ reason });
+    const req = http.request(`${ATERNOS_SERVICE_URL}/aternos/start`, {
+      method: "POST",
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': data.length
+      }
+    }, (res) => {
+      // Success
+    });
+    req.on("error", (e) => {
+      addLog(`[AternosLink] Could not notify BotAternos: ${e.message}`);
+    });
+    req.write(data);
+    req.end();
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    // Ignore errors
   }
-});
+}
 
-app.post("/aternos/login", async (req, res) => {
-  const { username, password, remember } = req.body || {};
-  if (!username || !password) {
-    return res.status(400).json({ success: false, error: "Username and password are required." });
-  }
-
-  if (!aternosController || !aternosController.browser) {
-    return res.status(404).json({ success: false, error: "Aternos browser is not active." });
-  }
-
+let isStartingWorker = false;
+function startMinecraftWorker() {
+  if (!USE_SPLIT_MINECRAFT) return;
+  if (isStartingWorker) return;
+  if (minecraftWorker && !minecraftWorker.killed) return;
+  isStartingWorker = true;
+  
   try {
-    const result = await aternosController.browser.loginWithCredentials(username, password);
-    if (!result.success) {
-      return res.status(401).json(result);
-    }
 
-    const tokens = await aternosController.syncTokens();
-    if (!tokens || !tokens.session) {
-      return res.status(401).json({ success: false, error: "Login did not produce an Aternos session cookie." });
-    }
-
-    if (remember) {
-      updateEnvValues({
-        ATERNOS_USER: String(username).trim(),
-        ATERNOS_PASS: String(password),
-      });
-    }
-
-    addLog("[Aternos] Dashboard login completed.");
-    res.json({ success: true });
-    
-    // Trigger immediate check
-    if (aternosController) {
-      aternosController.ensureStarted("dashboard-login").catch(() => {});
-    }
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.post("/aternos/cookie", async (req, res) => {
-  const { cookieString, remember } = req.body || {};
-  if (!cookieString || !String(cookieString).trim()) {
-    return res.status(400).json({ success: false, error: "Cookie string is required." });
-  }
-
-  if (!aternosController || !aternosController.browser) {
-    return res.status(404).json({ success: false, error: "Aternos browser is not active." });
-  }
-
-  try {
-    const result = await aternosController.browser.loginWithCookieString(cookieString);
-    if (!result.success) {
-      return res.status(401).json(result);
-    }
-
-    const tokenMatch = String(cookieString).match(/(?:^|;\s*)ATERNOS_AJAX_TOKEN=([^;]+)/i);
-    const sessionMatch = String(cookieString).match(/(?:^|;\s*)ATERNOS_SESSION=([^;]+)/i);
-    const updates = {};
-    if (sessionMatch) updates.ATERNOS_SESSION = decodeURIComponent(sessionMatch[1]);
-    if (tokenMatch) updates.ATERNOS_AJAX_TOKEN = decodeURIComponent(tokenMatch[1]);
-
-    if (Object.keys(updates).length > 0) {
-      updateEnvValues(updates);
-    }
-
-    if (remember) {
-      addLog("[Aternos] Cookie login remembered in .env.");
-    }
-
-    // CRITICAL: Close the browser to force re-init with new environment variables
-    if (aternosController && aternosController.browser) {
-      await aternosController.browser.close();
-      addLog("[Aternos] Browser recycled to apply new session.");
-    }
-
-    // Trigger immediate check
-    if (aternosController) {
-      aternosController.ensureStarted("dashboard-cookie").catch(() => {});
-    }
-
-    res.json({ success: true });
-
-    // Trigger immediate check
-    if (aternosController) {
-      aternosController.ensureStarted("cookie-login").catch(() => {});
-    }
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.post("/aternos/google/start", async (req, res) => {
-  if (!aternosController || !aternosController.browser) {
-    return res.status(404).json({ success: false, error: "Aternos browser is not active." });
-  }
-
-  try {
-    const result = await aternosController.browser.startGoogleLogin();
-    if (!result.success) {
-      return res.status(400).json(result);
-    }
-
-    addLog("[Aternos] Google login started from dashboard.");
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.get("/aternos/google/status", async (req, res) => {
-  if (!aternosController || !aternosController.browser) {
-    return res.status(404).json({ success: false, error: "Aternos browser is not active." });
-  }
-
-  try {
-    const state = await aternosController.browser.isLoggedIn();
-    if (!state.loggedIn) {
-      return res.json({
-        success: false,
-        pending: true,
-        url: state.url,
-        error: state.error || null,
-      });
-    }
-
-    const tokens = await aternosController.syncTokens();
-    if (!tokens || !tokens.session) {
-      return res.status(401).json({ success: false, error: "Google login did not produce an Aternos session cookie." });
-    }
-
-    if (aternosController.config && aternosController.config.headless !== false) {
-      await aternosController.browser.setHeadless(aternosController.config.headless);
-    }
-
-    addLog("[Aternos] Google login completed and session saved.");
-    res.json({ success: true, url: state.url });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.get("/aternos/info", async (req, res) => {
-  if (!aternosController || !aternosController.browser || !aternosController.browser.page) {
-    return res.status(404).json({ url: "None" });
-  }
-  res.json({
-    url: aternosController.browser.page.url(),
-    title: await aternosController.browser.page.title()
+  minecraftWorker = fork(__filename, [], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      BOTMINECRAFT_ROLE: "minecraft",
+      BOTMINECRAFT_SPLIT: "false",
+    },
+    stdio: ["inherit", "inherit", "inherit", "ipc"],
   });
-});
 
-// REMOTE CONTROL ENDPOINTS REMOVED
-app.post("/aternos/click", (req, res) => res.status(410).json({ success: false, error: "Disabled" }));
-app.post("/aternos/type", (req, res) => res.status(410).json({ success: false, error: "Disabled" }));
-app.post("/aternos/navigate", (req, res) => res.status(410).json({ success: false, error: "Disabled" }));
+  minecraftWorker.on("message", (message) => {
+    if (!message || typeof message !== "object") return;
+    if (message.type === "state") {
+      // MASTER IPC: Update historical stats using session ticks from worker
+      if (typeof message.payload.sessionTicks === 'number' && message.payload.connected) {
+        stats.totalPlaytime = Number(stats.totalPlaytime || 0) + message.payload.sessionTicks;
+        if (stats.totalPlaytime % 100 === 0) saveStats();
+      }
 
+      minecraftSnapshot = {
+        ...minecraftSnapshot,
+        ...message.payload,
+        bot: message.payload && message.payload.hasBot ? true : null,
+      };
+      botState.connected = Boolean(minecraftSnapshot.connected);
+      botState.lastActivity = message.payload.lastActivity || botState.lastActivity;
+      botState.lastPacket = message.payload.lastPacket || botState.lastPacket;
+      botState.reconnectAttempts = message.payload.reconnectAttempts || 0;
+      return;
+    }
+    if (message.type === "log" && message.payload && message.payload.line) {
+      addLog(message.payload.line);
+    }
+  });
 
-let botRunning = true;
+  minecraftWorker.on("exit", (code, signal) => {
+    addLog(`[MinecraftWorker] exited code=${code ?? "null"} signal=${signal ?? "null"}`);
+    minecraftWorker = null;
+    minecraftSnapshot = { bot: null, connected: false, reconnecting: false, coords: null };
+    botState.connected = false;
+    if (botRunning) {
+      setTimeout(startMinecraftWorker, 5000);
+    }
+  });
+
+  addLog("[MinecraftWorker] started as separated process.");
+  isStartingWorker = false;
+} catch (e) {
+  isStartingWorker = false;
+  addLog(`[System] Failed to fork worker: ${e.message}`);
+}
+}
+
+function stopMinecraftWorker() {
+  if (!minecraftWorker) return;
+  sendToMinecraftWorker("stop");
+  setTimeout(() => {
+    if (minecraftWorker && !minecraftWorker.killed) minecraftWorker.kill();
+  }, 5000);
+}
 
 app.post("/start", (req, res) => {
   if (botRunning) return res.json({ success: false, msg: "Already running" });
@@ -375,8 +328,12 @@ app.post("/start", (req, res) => {
   botState.lastActivity = Date.now();
   botState.lastPacket = Date.now();
 
-  if (aternosController) aternosController.start();
-  createBot();
+  if (USE_SPLIT_MINECRAFT) {
+    startMinecraftWorker();
+    sendToMinecraftWorker("start");
+  } else {
+    createBot();
+  }
   addLog("[Control] Bot started");
 
   res.json({ success: true });
@@ -387,7 +344,12 @@ app.post("/stop", (req, res) => {
 
   botRunning = false;
   resetReconnectState();
-  if (aternosController) aternosController.stop();
+  if (USE_SPLIT_MINECRAFT) {
+    stopMinecraftWorker();
+    botState.connected = false;
+    addLog("[Control] Bot stopped");
+    return res.json({ success: true });
+  }
 
   if (bot) {
     try {
@@ -418,8 +380,6 @@ app.post("/command", express.json(), (req, res) => {
       "  /help          - Show this help message",
       "  /pos           - Show bot's current coordinates",
       "  /status        - Show bot connection status",
-      "  /aternos       - Show Aternos auto-start status",
-      "  /aternos start - Force an Aternos start check",
       "  /list          - Ask server for player list",
       "  /say <message> - Send a chat message in-game",
       "  /<anything>    - Send any Minecraft command directly",
@@ -430,7 +390,7 @@ app.post("/command", express.json(), (req, res) => {
   }
 
   if (cmd === "/pos" || cmd === "/coords") {
-    const pos = bot && bot.entity ? bot.entity.position : null;
+    const pos = USE_SPLIT_MINECRAFT ? minecraftSnapshot.coords : (bot && bot.entity ? bot.entity.position : null);
     const msg = pos
       ? `Position: X=${Math.floor(pos.x)}  Y=${Math.floor(pos.y)}  Z=${Math.floor(pos.z)}`
       : "Position unavailable (bot not spawned).";
@@ -439,34 +399,20 @@ app.post("/command", express.json(), (req, res) => {
   }
 
   if (cmd === "/status") {
-    const status = botState.connected ? "Connected" : "Disconnected";
+    const status = (USE_SPLIT_MINECRAFT ? minecraftSnapshot.connected : botState.connected) ? "Connected" : "Disconnected";
     const uptime = Math.floor((Date.now() - botState.startTime) / 1000);
     const msg = `Status: ${status} | Uptime: ${uptime}s | Reconnects: ${botState.reconnectAttempts}`;
     addLog(`[Console] ${msg}`);
     return res.json({ success: true, msg });
   }
 
-  if (cmd === "/aternos") {
-    const state = aternosController ? aternosController.getPublicState() : null;
-    const msg = state
-      ? `Aternos: enabled=${state.enabled} configured=${state.configured} status=${state.status?.class || "unknown"} error=${state.lastError || "none"}`
-      : "Aternos monitor is not initialized.";
-    addLog(`[Console] ${msg}`);
-    return res.json({ success: true, msg });
-  }
-
-  if (cmd === "/aternos start") {
-    if (!aternosController || !aternosController.getPublicState().configured) {
-      const msg = "Aternos session is not configured.";
+  if (USE_SPLIT_MINECRAFT) {
+    if (!sendToMinecraftWorker("command", { command: cmd })) {
+      const msg = "Minecraft worker is not running.";
       addLog(`[Console] ${msg}`);
       return res.json({ success: false, msg });
     }
-    aternosController
-      .ensureStarted("manual-command")
-      .catch((err) => addLog(`[Aternos] ${err.message}`));
-    const msg = "Aternos start check queued.";
-    addLog(`[Console] ${msg}`);
-    return res.json({ success: true, msg });
+    return res.json({ success: true, msg: `Queued: ${cmd}` });
   }
 
   if (!bot || typeof bot.chat !== "function") {
@@ -492,18 +438,20 @@ app.post("/command", express.json(), (req, res) => {
 //============================================================
 
 // FIX: handle port conflict gracefully - try next port if taken
-const server = app.listen(PORT, "0.0.0.0", () => {
-  addLog(`[Server] HTTP server started on port ${server.address().port} `);
-});
-server.on("error", (err) => {
-  if (err.code === "EADDRINUSE") {
-    const fallbackPort = PORT + 1;
-    addLog(`[Server] Port ${PORT} in use - trying port ${fallbackPort} `);
-    server.listen(fallbackPort, "0.0.0.0");
-  } else {
-    addLog(`[Server] HTTP server error: ${err.message} `);
-  }
-});
+if (!IS_MINECRAFT_WORKER) {
+  const server = app.listen(PORT, "0.0.0.0", () => {
+    addLog(`[Server] HTTP server started on port ${server.address().port} `);
+  });
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      const fallbackPort = PORT + 1;
+      addLog(`[Server] Port ${PORT} in use - trying port ${fallbackPort} `);
+      server.listen(fallbackPort, "0.0.0.0");
+    } else {
+      addLog(`[Server] HTTP server error: ${err.message} `);
+    }
+  });
+}
 
 // FIX: only one definition of formatUptime
 function formatUptime(ticks) {
@@ -553,7 +501,9 @@ function startSelfPing() {
   addLog("[KeepAlive] Self-ping system started (every 10 min)");
 }
 
-startSelfPing();
+if (!IS_MINECRAFT_WORKER) {
+  startSelfPing();
+}
 
 // ============================================================
 // MEMORY MONITORING (STRICT LIMIT)
@@ -575,12 +525,8 @@ setInterval(
         try { global.gc(); } catch (e) {}
       }
 
-      // If significantly over limit, recycle browser immediately
       if (rssMB > 450) {
-        addLog("[Memory] CRITICAL: Recycling browser to free memory.");
-        if (aternosController && aternosController.browser) {
-          aternosController.browser.close().catch(() => {});
-        }
+        addLog("[Memory] CRITICAL: high memory usage detected.");
       }
 
       // Restart process if it hits the near-fatal limit
@@ -592,6 +538,119 @@ setInterval(
   },
   60 * 1000, // Check every minute
 );
+
+function publishMinecraftState() {
+  if (!IS_MINECRAFT_WORKER || !process.send) return;
+
+  // Track session ticks ONLY while connected
+  let sessionTicks = 0;
+  if (botState.connected) {
+    const now = Date.now();
+    if (!botState.sessionStartTime) botState.sessionStartTime = now;
+    const lastTickTime = botState.lastTickTime || now;
+    sessionTicks = Math.floor((now - lastTickTime) / 50);
+    botState.lastTickTime = now;
+  } else {
+    // Reset timers when not connected to ensure fresh start on next spawn
+    botState.sessionStartTime = null;
+    botState.lastTickTime = null;
+  }
+
+  const pData = bot && bot.players ? Object.values(bot.players).map(p => {
+    const findDim = (obj) => {
+      const str = JSON.stringify(obj).toLowerCase();
+      if (str.includes("overworld")) return "overworld";
+      if (str.includes("nether")) return "nether";
+      if (str.includes("end")) return "end";
+      return null;
+    };
+    const pDim = findDim(p) || "unknown";
+
+    return {
+      name: p.username,
+      nearby: !!p.entity,
+      dimension: pDim
+    };
+  }) : [];
+  const weather = bot ? (bot.isThundering ? "Storming" : bot.isRaining ? "Raining" : "Clear") : "Unknown";
+  const dimension = bot && bot.game ? bot.game.dimension : "overworld";
+  
+  // Format world time
+  let timeStr = "Unknown";
+  if (bot && bot.time) {
+    const totalTicks = bot.time.timeOfDay;
+    const hours = Math.floor((totalTicks / 1000 + 6) % 24);
+    const minutes = Math.floor((totalTicks % 1000) * 60 / 1000);
+    timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+  }
+
+  process.send({
+    type: "state",
+    payload: {
+      hasBot: Boolean(bot),
+      connected: botState.connected,
+      reconnecting: isReconnecting,
+      coords: bot && bot.entity ? bot.entity.position : null,
+      lastActivity: botState.lastActivity,
+      lastPacket: botState.lastPacket,
+      reconnectAttempts: botState.reconnectAttempts,
+      sessionTicks: sessionTicks,
+      playerCount: pData.length,
+      playerData: pData,
+      weather: weather,
+      dimension: dimension,
+      worldTime: timeStr,
+      worldDay: bot && bot.time ? bot.time.day : 0
+    },
+  });
+}
+
+if (IS_MINECRAFT_WORKER && process.send) {
+  setInterval(publishMinecraftState, 2000);
+
+  process.on("message", (message) => {
+    if (!message || typeof message !== "object") return;
+    const payload = message.payload || {};
+    if (message.type === "start") {
+      if (botRunning) return;
+      botRunning = true;
+      resetReconnectState();
+      createBot();
+      publishMinecraftState();
+      return;
+    }
+    if (message.type === "stop") {
+      botRunning = false;
+      disconnectCurrentBot("dashboard-stop");
+      publishMinecraftState();
+      return;
+    }
+    if (message.type === "connect") {
+      createBot();
+      publishMinecraftState();
+      return;
+    }
+    if (message.type === "disconnect") {
+      disconnectCurrentBot(payload.reason || "dashboard-disconnect");
+      publishMinecraftState();
+      return;
+    }
+    if (message.type === "command") {
+      const cmd = String(payload.command || "").trim();
+      if (!cmd) return;
+      if (!bot || typeof bot.chat !== "function") {
+        addLog("[Console] Bot is not running.");
+        return;
+      }
+      try {
+        bot.chat(cmd);
+        addLog(`[Console] Sent to server: ${cmd}`);
+      } catch (err) {
+        addLog(`[Console] Error: ${err.message}`);
+      }
+    }
+  });
+}
 
 // ============================================================
 // BOT CREATION WITH RECONNECTION LOGIC
@@ -605,7 +664,6 @@ let reconnectTimeoutId = null;
 let connectionTimeoutId = null;
 let isReconnecting = false;
 let forceAutoDetectVersion = false;
-let aternosController = null;
 
 function clearBotTimeouts() {
   if (reconnectTimeoutId) {
@@ -625,38 +683,6 @@ function resetReconnectState() {
   botState.wasThrottled = false;
 }
 
-function getAternosConfig() {
-  const autoStart = config.aternos && config.aternos["auto-start"]
-    ? config.aternos["auto-start"]
-    : {};
-
-  return {
-    ...autoStart,
-    serverIp: config.server && config.server.ip,
-  };
-}
-
-function isAternosAutoStartEnabled() {
-  const aternosConfig = getAternosConfig();
-  return Boolean(aternosConfig.enabled);
-}
-
-function isAternosReadyForMinecraft() {
-  return !aternosController || aternosController.isReadyForMinecraft();
-}
-
-function markAternosNotReadyFromMinecraft(reason) {
-  if (aternosController && typeof aternosController.markMinecraftDisconnected === "function") {
-    aternosController.markMinecraftDisconnected(reason);
-  }
-}
-
-function markAternosReadyFromMinecraft() {
-  if (aternosController && typeof aternosController.markMinecraftConnected === "function") {
-    aternosController.markMinecraftConnected();
-  }
-}
-
 function getBotDimension(currentBot) {
   return String(
     currentBot?.game?.dimension ||
@@ -674,8 +700,7 @@ function isOverworldDimension(currentBot) {
 function enforceOverworld(currentBot, source) {
   if (!currentBot || !botState.connected || isOverworldDimension(currentBot)) return;
   const dimension = getBotDimension(currentBot) || "unknown";
-  addLog(`[Bot] Not in overworld (${dimension}) after ${source}; reconnecting through Aternos gate.`);
-  markAternosNotReadyFromMinecraft(`not-overworld:${dimension}`);
+  addLog(`[Bot] Not in overworld (${dimension}) after ${source}; reconnecting.`);
   try {
     currentBot.end("not-overworld");
   } catch (e) {
@@ -693,7 +718,7 @@ function disconnectCurrentBot(reason) {
 
   try {
     bot.removeAllListeners();
-    bot.end(reason || "aternos-offline");
+    bot.end(reason || "dashboard-stop");
   } catch (e) {
     addLog(`[Cleanup] Error ending bot: ${e.message}`);
   }
@@ -744,13 +769,8 @@ function createBot() {
     return;
   }
 
-  if (isAternosAutoStartEnabled() && !isAternosReadyForMinecraft()) {
-    addLog("[Bot] Aternos is not online yet - waiting for auto-start monitor.");
-    if (aternosController) {
-      aternosController
-        .ensureStarted("minecraft-connect-request")
-        .catch((err) => addLog(`[Aternos] ${err.message}`));
-    }
+  if (isConnecting) {
+    addLog("[Bot] Connection in progress, skipping...");
     return;
   }
 
@@ -758,6 +778,8 @@ function createBot() {
     addLog("[Bot] Already reconnecting, skipping...");
     return;
   }
+
+  isConnecting = true;
 
   // Cleanup previous bot properly to avoid ghost bots
   if (bot) {
@@ -813,6 +835,7 @@ function createBot() {
     connectionTimeoutId = setTimeout(() => {
       if (botRunning && !botState.connected) {
         addLog("[Bot] Connection timeout - no spawn received");
+        notifyAternosToStart("connection-timeout");
         if (!forceAutoDetectVersion && config.server.version && config.server.version.trim() !== "") {
           forceAutoDetectVersion = true;
           addLog("[Bot] No spawn received - retrying with auto-detect version.");
@@ -841,9 +864,8 @@ function createBot() {
       botState.lastPacket = Date.now();
       botState.reconnectAttempts = 0;
       isReconnecting = false;
+      isConnecting = false;
       forceAutoDetectVersion = false;
-      markAternosReadyFromMinecraft();
-
       addLog(
         `[Bot] [+] Successfully spawned on server! (Version: ${bot.version})`,
       );
@@ -888,6 +910,30 @@ function createBot() {
       });
 
       bot.on("game", () => enforceOverworld(bot, "game update"));
+
+      // Request statistics from server periodically to get authoritative playtime
+      const requestStats = () => {
+        if (bot && bot._client && botState.connected) {
+          try {
+            // Action ID 1 requests statistics
+            bot._client.write('client_command', { actionId: 1 });
+          } catch (e) {}
+        }
+      };
+
+      // Initial request and then every 5 minutes
+      setTimeout(requestStats, 10000);
+      addInterval(requestStats, 5 * 60 * 1000);
+
+      // Fallback: listen to raw client packets if Mineflayer event doesn't fire
+      if (bot._client) {
+        bot._client.on('statistics', (packet) => {
+          if (!packet || !packet.entries) return;
+          // If we get here, the statistics event above should also fire,
+          // but this confirms the server is actually sending the packet.
+          // addLog(`[Debug] Raw statistics packet received with ${packet.entries.length} entries`);
+        });
+      }
     });
 
     // FIX: 'kicked' fires before 'end'. Remove the scheduleReconnect from 'kicked'
@@ -897,7 +943,6 @@ function createBot() {
       const kickReason =
         typeof reason === "object" ? JSON.stringify(reason) : reason;
       addLog(`[Bot] Kicked: ${kickReason}`);
-      markAternosNotReadyFromMinecraft(kickReason);
       botState.connected = false;
       botState.errors.push({
         type: "kicked",
@@ -939,8 +984,8 @@ function createBot() {
 
     // FIX: 'end' is the single reconnect trigger
     bot.on("end", (reason) => {
-      addLog(`[Bot] Disconnected: ${reason || "Unknown reason"}`);
-      markAternosNotReadyFromMinecraft(reason || "Unknown reason");
+      addLog(`[Bot] Disconnected: ${reason || "socketClosed"}`);
+      isConnecting = false;
       botState.connected = false;
       clearAllIntervals();
       spawnHandled = false; // reset for next connection
@@ -961,9 +1006,10 @@ function createBot() {
     });
 
     bot.on("error", (err) => {
+      isConnecting = false;
       const msg = err.message || "";
       addLog(`[Bot] Error: ${msg}`);
-      markAternosNotReadyFromMinecraft(msg);
+      notifyAternosToStart(`connection-error-${err.code || 'unknown'}`);
       botState.errors.push({ type: "error", message: msg, time: Date.now() });
       const lower = msg.toLowerCase();
       if (
@@ -999,17 +1045,6 @@ function scheduleReconnect() {
   if (!botRunning || !config.utils["auto-reconnect"]) {
     isReconnecting = false;
     addLog("[Bot] Auto-reconnect disabled or bot stopped, not reconnecting.");
-    return;
-  }
-
-  if (isAternosAutoStartEnabled() && !isAternosReadyForMinecraft()) {
-    isReconnecting = false;
-    addLog("[Bot] Minecraft reconnect paused until Aternos is online.");
-    if (aternosController) {
-      aternosController
-        .ensureStarted("minecraft-disconnected")
-        .catch((err) => addLog(`[Aternos] ${err.message}`));
-    }
     return;
   }
 
@@ -1571,14 +1606,9 @@ rl.on("line", (line) => {
   } else if (trimmed.startsWith("cmd ")) {
     bot.chat("/" + trimmed.slice(4));
   } else if (trimmed === "status") {
-    const aternosStatus = aternosController ? aternosController.getPublicState() : null;
-    const aternosLabel = aternosStatus?.status?.label || "N/A";
     addLog(
       `[Status] Bot: ${botState.connected ? "Connected" : "Disconnected"}, Uptime: ${formatUptime(Math.floor((Date.now() - botState.startTime) / 1000))}`,
     );
-    if (aternosStatus && aternosStatus.enabled) {
-      addLog(`[Status] Aternos: ${aternosLabel} (Running: ${aternosStatus.running})`);
-    }
   } else {
     bot.chat(trimmed);
   }
@@ -1697,6 +1727,17 @@ process.on("uncaughtException", (err) => {
   );
 });
 
+function isDetachedFrameError(reason) {
+  const msg = String(reason && reason.message ? reason.message : reason);
+  return (
+    msg.includes("Attempted to use detached Frame") ||
+    msg.includes("Execution context was destroyed") ||
+    msg.includes("Cannot find context with specified id") ||
+    msg.includes("Target closed") ||
+    msg.includes("Page crashed")
+  );
+}
+
 process.on("unhandledRejection", (reason) => {
   const msg = String(reason);
   if (isDetachedFrameError(reason)) {
@@ -1718,14 +1759,19 @@ process.on("unhandledRejection", (reason) => {
     msg.includes("PartialReadError");
 
   if (isNetworkError && !isReconnecting) {
-    addLog("[FATAL] Network rejection — triggering reconnect...");
-    clearAllIntervals();
-    botState.connected = false;
-    if (bot) {
-      try { bot.end(); } catch (_) { }
-      bot = null;
+    // ONLY reconnect if this process is supposed to be running a bot directly
+    if (IS_MINECRAFT_WORKER || !USE_SPLIT_MINECRAFT) {
+      addLog("[FATAL] Network rejection — triggering reconnect...");
+      clearAllIntervals();
+      botState.connected = false;
+      if (bot) {
+        try { bot.end(); } catch (_) { }
+        bot = null;
+      }
+      scheduleReconnect();
+    } else {
+      addLog("[FATAL] Network rejection in Master (Split mode) — ignoring bot reconnect logic.");
     }
-    scheduleReconnect();
   }
 });
 
@@ -1741,40 +1787,45 @@ process.on("SIGINT", () => {
 //===============================
 // START THE BOT
 // ============================================================
-addLog("=".repeat(50));
-addLog("  Minecraft AFK Bot v2.5 - Bug-Fixed Edition");
-addLog("=".repeat(50));
-addLog(`Server: ${config.server.ip}:${config.server.port}`);
-addLog(`Version: ${config.server.version}`);
-addLog(
-  `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
-);
-addLog(
-  `Aternos Auto-Start: ${isAternosAutoStartEnabled() ? "Enabled" : "Disabled"
-  }`,
-);
-addLog("=".repeat(50));
+if (!IS_MINECRAFT_WORKER) {
+  addLog("=".repeat(50));
+  addLog("  Minecraft AFK Bot v2.5 - Bug-Fixed Edition");
+  addLog("=".repeat(50));
+  addLog(`Server: ${config.server.ip}:${config.server.port}`);
+  addLog(`Version: ${config.server.version}`);
+  addLog(
+    `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
+  );
+  addLog(
+    "Dashboard: Enabled",
+  );
+  addLog("=".repeat(50));
+}
 
 async function main() {
-  aternosController = new AternosController({
-    config: getAternosConfig(),
-    addLog,
-    getBotState: () => ({
-      bot,
-      connected: botState.connected,
-      reconnecting: isReconnecting,
-    }),
-    disconnectBot: disconnectCurrentBot,
-    connectBot: createBot,
-  });
-
-  if (isAternosAutoStartEnabled()) {
-    await aternosController.start();
+  if (IS_MINECRAFT_WORKER) {
+    addLog("[MinecraftWorker] Mineflayer system standby — waiting for start signal.");
+    // createBot() will be called when "start" message is received from master
+    publishMinecraftState();
+    return;
   }
 
-  createBot();
+  if (USE_SPLIT_MINECRAFT) {
+    startMinecraftWorker();
+    // Mark as running so that future /start calls are ignored
+    botRunning = true;
+    // In split mode, the master waits for the worker to be ready or simply sends the start command
+    setTimeout(() => {
+        sendToMinecraftWorker("start");
+    }, 2000);
+  } else {
+    botRunning = true;
+    createBot();
+  }
 }
 
 main().catch(err => {
-  addLog(`[FATAL] Startup error: ${err.message}`);
+  if (!IS_MINECRAFT_WORKER) {
+    addLog(`[FATAL] Startup error: ${err.message}`);
+  }
 });

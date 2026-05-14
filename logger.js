@@ -1,8 +1,8 @@
 const logs = [];
 
 function addLog(message) {
-  const cleanMessage = message.replace(/^\[(AternosBrowser|Aternos|Bot|Stats|Server|System|Control)\]\s*/, "");
-  const categoryMatch = message.match(/^\[(AternosBrowser|Aternos|Bot|Stats|Server|System|Control)\]/);
+  const cleanMessage = message.replace(/^\[(Bot|Stats|Server|System|Control)\]\s*/, "");
+  const categoryMatch = message.match(/^\[(Bot|Stats|Server|System|Control)\]/);
   const category = categoryMatch ? categoryMatch[1] : "System";
 
   const MAX_LEN = 300; // Reduced from 500
