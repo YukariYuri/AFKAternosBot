@@ -224,7 +224,7 @@ function sendToMinecraftWorker(type, payload = {}) {
   return true;
 }
 
-const ATERNOS_SERVICE_URL = "http://localhost:5001";
+const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com";
 
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
   try {
