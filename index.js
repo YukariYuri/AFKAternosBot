@@ -902,10 +902,16 @@ function createBot() {
     // so that 'end' is the single source of reconnect truth, preventing double-trigger.
     bot.on("kicked", (reason) => {
       isConnecting = false;
-      // FIX: stringify reason if it's an object to make it readable in logs
-      const kickReason =
-        typeof reason === "object" ? JSON.stringify(reason) : reason;
+      const kickReason = typeof reason === "object" ? JSON.stringify(reason) : String(reason);
       addLog(`[Bot] Kicked: ${kickReason}`);
+      
+      // FIX: If duplicate login, wait longer to let the server clear the old session
+      if (kickReason.includes("duplicate_login") || kickReason.includes("already logged in")) {
+        addLog("[Bot] Duplicate login detected. Waiting 15s for session to clear...");
+        botState.reconnectAttempts++; // Increment so we don't spam
+        setTimeout(createBot, 15000);
+        return;
+      }
       botState.connected = false;
       botState.errors.push({
         type: "kicked",
