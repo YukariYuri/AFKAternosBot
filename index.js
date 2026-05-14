@@ -237,16 +237,20 @@ function sendToMinecraftWorker(type, payload = {}) {
   return true;
 }
 
-const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com";
+const IS_RENDER = !!process.env.RENDER_EXTERNAL_URL;
+const ATERNOS_SERVICE_URL = IS_RENDER 
+  ? "https://aternosbot-8zes.onrender.com" 
+  : "http://localhost:5001";
 
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
   try {
-    const https = require("https"); // Use https for Render URLs
+    const protocol = ATERNOS_SERVICE_URL.startsWith("https") ? require("https") : require("http");
     const data = JSON.stringify({ reason });
     const url = new URL(`${ATERNOS_SERVICE_URL}/aternos/start`);
     
-    const req = https.request({
+    const req = protocol.request({
       hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
       path: url.pathname,
       method: "POST",
       headers: {
@@ -773,6 +777,15 @@ function getReconnectDelay() {
 }
 
 function createBot() {
+  // FIX: Reload config from disk before every connection to get updated port/IP
+  try {
+    const freshConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
+    // Update the existing config object without replacing it to keep references
+    Object.assign(config, freshConfig);
+  } catch (e) {
+    addLog(`[Config] Failed to reload settings.json: ${e.message}`);
+  }
+
   if (!botRunning) {
     addLog("[Bot] Bot is stopped, skipping connect.");
     return;
