@@ -836,7 +836,7 @@ function createBot() {
       version: botVersion,
       viewDistance: 'tiny', // Memory optimization
       hideErrors: true, // Reduce log noise
-      checkTimeoutInterval: 15000, // Faster timeout check
+      checkTimeoutInterval: 45000, // Wait longer for Aternos packets
     });
 
     // SPECTATOR MODE OPTIMIZATION: 
@@ -852,26 +852,19 @@ function createBot() {
       });
     }
 
-    // FIX: connection timeout - end the old bot before reconnecting to avoid ghost bots
+    // FIX: connection timeout - increased to 120s for slow Aternos startup
     clearBotTimeouts();
     connectionTimeoutId = setTimeout(() => {
       if (botRunning && !botState.connected) {
-        addLog("[Bot] Connection timeout - no spawn received");
+        addLog("[Bot] Connection timeout - no spawn received within 120s.");
         notifyAternosToStart("connection-timeout");
         if (!forceAutoDetectVersion && config.server.version && config.server.version.trim() !== "") {
           forceAutoDetectVersion = true;
-          addLog("[Bot] No spawn received - retrying with auto-detect version.");
+          addLog("[Bot] Retrying with auto-detect version...");
         }
-        try {
-          bot.removeAllListeners();
-          bot.end();
-        } catch (e) {
-          /* ignore */
-        }
-        bot = null;
         scheduleReconnect();
       }
-    }, 60000); // Reduced from 150s to 60s for faster recovery
+    }, 120000); 
 
     // FIX: guard against spawn firing twice (can happen on some servers)
     let spawnHandled = false;
