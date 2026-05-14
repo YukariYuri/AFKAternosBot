@@ -16,27 +16,28 @@ let { addLog, getLogs } = require("./logger");
 if (IS_MINECRAFT_WORKER && process.send) {
   // Global error handler for worker
   process.on("uncaughtException", (err) => {
-    const msg = `[WORKER FATAL ERROR] ${err.stack || err.message || err}`;
-    console.error(msg);
-    try { process.send({ type: "log", payload: { line: msg } }); } catch (e) { }
+    const msg = String(err.message || err);
+    const stack = err.stack || msg;
+    
+    // Only log once
+    addLog(`[WORKER ERROR] ${msg}`);
+    
+    // If it's a known network error, don't crash the worker, just reconnect
+    if (msg.includes('ETIMEDOUT') || msg.includes('ECONNRESET') || msg.includes('EPIPE') || msg.includes('keepAliveError')) {
+      if (typeof scheduleReconnect === 'function') {
+        scheduleReconnect();
+        return;
+      }
+    }
+    
+    // For other fatal errors, log stack and exit
+    console.error(`[WORKER FATAL] ${stack}`);
     process.exit(1);
   });
 
-// Global error handling for the worker to prevent fatal crashes
-if (IS_MINECRAFT_WORKER) {
-  process.on('uncaughtException', (err) => {
-    const msg = String(err.message || err);
-    console.error(`[Worker Uncaught] ${msg}`);
-    // If it's a network error, just trigger a reconnect if we aren't already
-    if (msg.includes('ETIMEDOUT') || msg.includes('ECONNRESET') || msg.includes('EPIPE')) {
-      if (typeof scheduleReconnect === 'function') scheduleReconnect();
-    }
-  });
-
   process.on('unhandledRejection', (reason) => {
-    console.error(`[Worker Unhandled Rejection] ${reason}`);
+    addLog(`[Worker Unhandled Rejection] ${reason}`);
   });
-}
 
 const originalAddLog = addLog;
   addLog = (line) => {
@@ -774,13 +775,13 @@ function getReconnectDelay() {
 
 function createBot() {
   // FIX: Reload config from disk before every connection to get updated port/IP
-  // try {
-  //   const freshConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
-  //   // Update the existing config object without replacing it to keep references
-  //   Object.assign(config, freshConfig);
-  // } catch (e) {
-  //   addLog(`[Config] Failed to reload settings.json: ${e.message}`);
-  // }
+  try {
+    const freshConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
+    // Update the existing config object without replacing it to keep references
+    Object.assign(config, freshConfig);
+  } catch (e) {
+    addLog(`[Config] Failed to reload settings.json: ${e.message}`);
+  }
 
   if (!botRunning) {
     addLog("[Bot] Bot is stopped, skipping connect.");
@@ -840,7 +841,7 @@ function createBot() {
       version: botVersion,
       viewDistance: 'tiny',
       hideErrors: true,
-      checkTimeoutInterval: 60000, // Increase to 60s for maximum lag tolerance
+      checkTimeoutInterval: 90000, // Increased to 90s for maximum lag tolerance (Aternos can be very slow)
     });
 
     // console.log(bot);
