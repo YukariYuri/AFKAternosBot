@@ -816,36 +816,14 @@ function createBot() {
   addLog(`[Bot] Connecting to ${config.server.ip}:${config.server.port}`);
 
   try {
-    // FIX: use version:false to auto-detect server version so the bot can join any server.
-    let botVersion = "1.21.11";
-    const cfgVersion = (config.server.version || "").trim();
-    
-    if (!forceAutoDetectVersion && cfgVersion !== "") {
-      // ONLY use the version if it looks like a standard Java version (e.g. 1.21, 1.20.1)
-      if (/^1\.\d+/.test(cfgVersion)) {
-        botVersion = cfgVersion;
-      } else {
-        addLog(`[Bot] Version "${cfgVersion}" looks like Bedrock/Custom. Forcing auto-detect.`);
-      }
-    }
-    
-    if (forceAutoDetectVersion || botVersion === false) {
-      addLog("[Bot] Using auto-detected version fallback.");
-    }
     bot = mineflayer.createBot({
       username: config["bot-account"].username,
       password: config["bot-account"].password || undefined,
       auth: config["bot-account"].type,
       host: config.server.ip,
       port: config.server.port,
-      version: botVersion,
-      viewDistance: 'tiny',
-      hideErrors: true,
-      checkTimeoutInterval: 90000, // Increased to 90s for maximum lag tolerance (Aternos can be very slow)
+      version: false,
     });
-
-    // console.log(bot);
-    // console.log(bot.version);
 
     // SPECTATOR MODE OPTIMIZATION: 
     // Since the bot is in spectator mode, physics (gravity, collision) are not needed.
@@ -867,10 +845,6 @@ function createBot() {
         addLog("[Bot] Connection timeout - no spawn received within 120s.");
         isConnecting = false;
         notifyAternosToStart("connection-timeout");
-        if (!forceAutoDetectVersion && config.server.version && config.server.version.trim() !== "") {
-          forceAutoDetectVersion = true;
-          addLog("[Bot] Retrying with auto-detect version...");
-        }
         scheduleReconnect();
       }
     }, 120000);
