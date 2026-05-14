@@ -220,7 +220,7 @@ function sendToMinecraftWorker(type, payload = {}) {
 }
 
 // const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com"
-const ATERNOS_SERVICE_URL = "http://localhost:5001"
+const ATERNOS_SERVICE_URL = process.env.ATERNOS_SERVICE_URL || "http://localhost:5001"
 
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
   try {
@@ -242,7 +242,7 @@ async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
       addLog(`[AternosLink] Notified BotAternos: ${res.statusCode}`);
     });
     req.on("error", (e) => {
-      addLog(`[AternosLink] Could not notify BotAternos: ${e.message}`);
+      addLog(`[AternosLink] Could not notify BotAternos: ${e.message || 'Connection refused/timeout'}`);
     });
     req.write(data);
     req.end();
@@ -823,6 +823,10 @@ function createBot() {
       host: config.server.ip,
       port: config.server.port,
       version: config.server.version,
+      // FIX: handle slow Aternos startup and laggy connection
+      connectTimeout: 60000,
+      checkTimeoutInterval: 60000,
+      keepAlive: true,
     });
 
     // SPECTATOR MODE OPTIMIZATION: 
@@ -838,7 +842,7 @@ function createBot() {
       });
     }
 
-    // FIX: connection timeout - increased to 120s for slow Aternos startup
+    // FIX: connection timeout - increased to 300s for slow Aternos startup
     clearBotTimeouts();
     connectionTimeoutId = setTimeout(() => {
       if (botRunning && !botState.connected) {
