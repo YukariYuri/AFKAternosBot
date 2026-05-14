@@ -17,8 +17,8 @@ if (IS_MINECRAFT_WORKER && process.send) {
   // Global error handler for worker
   process.on("uncaughtException", (err) => {
     const msg = `[WORKER FATAL ERROR] ${err.stack || err.message || err}`;
-    console.error(msg); 
-    try { process.send({ type: "log", payload: { line: msg } }); } catch (e) {}
+    console.error(msg);
+    try { process.send({ type: "log", payload: { line: msg } }); } catch (e) { }
     process.exit(1);
   });
 
@@ -157,7 +157,7 @@ app.get('/logs', (req, res) => res.send(getTemplate("logs.html")));
 app.get("/health", (req, res) => {
   const splitState = USE_SPLIT_MINECRAFT ? minecraftSnapshot : null;
   const state = splitState || botState;
-  
+
   res.json({
     status: state.connected ? "connected" : "disconnected",
     uptime: Number(stats.totalPlaytime || 0),
@@ -202,8 +202,8 @@ function sendToMinecraftWorker(type, payload = {}) {
 }
 
 const IS_RENDER = !!process.env.RENDER_EXTERNAL_URL;
-const ATERNOS_SERVICE_URL = IS_RENDER 
-  ? "https://aternosbot-8zes.onrender.com" 
+const ATERNOS_SERVICE_URL = IS_RENDER
+  ? "https://aternosbot-8zes.onrender.com"
   : "http://localhost:5001";
 
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
@@ -211,7 +211,7 @@ async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
     const protocol = ATERNOS_SERVICE_URL.startsWith("https") ? require("https") : require("http");
     const data = JSON.stringify({ reason });
     const url = new URL(`${ATERNOS_SERVICE_URL}/aternos/start`);
-    
+
     const req = protocol.request({
       hostname: url.hostname,
       port: url.port || (url.protocol === 'https:' ? 443 : 80),
@@ -240,73 +240,73 @@ function startMinecraftWorker() {
   if (isStartingWorker) return;
   if (minecraftWorker && !minecraftWorker.killed) return;
   isStartingWorker = true;
-  
+
   try {
 
-  minecraftWorker = fork(__filename, [], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      BOTMINECRAFT_ROLE: "minecraft",
-      BOTMINECRAFT_SPLIT: "false",
-    },
-    stdio: ["inherit", "inherit", "inherit", "ipc"],
-  });
+    minecraftWorker = fork(__filename, [], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        BOTMINECRAFT_ROLE: "minecraft",
+        BOTMINECRAFT_SPLIT: "false",
+      },
+      stdio: ["inherit", "inherit", "inherit", "ipc"],
+    });
 
-  minecraftWorker.on("message", (message) => {
-    if (!message || typeof message !== "object") return;
-    if (message.type === "state") {
-      // MASTER IPC: Update historical stats using session ticks from worker
-      if (typeof message.payload.sessionTicks === 'number' && message.payload.connected) {
-        stats.totalPlaytime = Number(stats.totalPlaytime || 0) + message.payload.sessionTicks;
-        if (stats.totalPlaytime % 100 === 0) saveStats();
+    minecraftWorker.on("message", (message) => {
+      if (!message || typeof message !== "object") return;
+      if (message.type === "state") {
+        // MASTER IPC: Update historical stats using session ticks from worker
+        if (typeof message.payload.sessionTicks === 'number' && message.payload.connected) {
+          stats.totalPlaytime = Number(stats.totalPlaytime || 0) + message.payload.sessionTicks;
+          if (stats.totalPlaytime % 100 === 0) saveStats();
+        }
+
+        minecraftSnapshot = {
+          ...minecraftSnapshot,
+          ...message.payload,
+          bot: message.payload && message.payload.hasBot ? true : null,
+        };
+        botState.connected = Boolean(minecraftSnapshot.connected);
+        botState.lastActivity = message.payload.lastActivity || botState.lastActivity;
+        botState.lastPacket = message.payload.lastPacket || botState.lastPacket;
+        botState.reconnectAttempts = message.payload.reconnectAttempts || 0;
+        return;
       }
+      if (message.type === "log" && message.payload && message.payload.line) {
+        addLog(message.payload.line);
+      }
+    });
 
+    minecraftWorker.on("exit", (code, signal) => {
+      addLog(`[MinecraftWorker] exited code=${code ?? "null"} signal=${signal ?? "null"}`);
+      minecraftWorker = null;
       minecraftSnapshot = {
-        ...minecraftSnapshot,
-        ...message.payload,
-        bot: message.payload && message.payload.hasBot ? true : null,
+        bot: null, connected: false, reconnecting: false, coords: null,
+        playerCount: 0, playerNames: [], weather: "Unknown", worldTime: "Unknown", worldDay: 0
       };
-      botState.connected = Boolean(minecraftSnapshot.connected);
-      botState.lastActivity = message.payload.lastActivity || botState.lastActivity;
-      botState.lastPacket = message.payload.lastPacket || botState.lastPacket;
-      botState.reconnectAttempts = message.payload.reconnectAttempts || 0;
-      return;
-    }
-    if (message.type === "log" && message.payload && message.payload.line) {
-      addLog(message.payload.line);
-    }
-  });
-
-  minecraftWorker.on("exit", (code, signal) => {
-    addLog(`[MinecraftWorker] exited code=${code ?? "null"} signal=${signal ?? "null"}`);
-    minecraftWorker = null;
-    minecraftSnapshot = {
-      bot: null, connected: false, reconnecting: false, coords: null,
-      playerCount: 0, playerNames: [], weather: "Unknown", worldTime: "Unknown", worldDay: 0
-    };
-    botState.connected = false;
-    if (botRunning) {
-      addLog("[System] Bot was running, restarting worker in 5s...");
-      setTimeout(() => {
-        startMinecraftWorker();
-        // Automatically send start signal after worker starts
+      botState.connected = false;
+      if (botRunning) {
+        addLog("[System] Bot was running, restarting worker in 5s...");
         setTimeout(() => {
-          if (botRunning && minecraftWorker) {
-            addLog("[System] Auto-sending start signal to restarted worker.");
-            sendToMinecraftWorker("start");
-          }
-        }, 3000);
-      }, 5000);
-    }
-  });
+          startMinecraftWorker();
+          // Automatically send start signal after worker starts
+          setTimeout(() => {
+            if (botRunning && minecraftWorker) {
+              addLog("[System] Auto-sending start signal to restarted worker.");
+              sendToMinecraftWorker("start");
+            }
+          }, 3000);
+        }, 5000);
+      }
+    });
 
-  addLog("[MinecraftWorker] started as separated process.");
-  isStartingWorker = false;
-} catch (e) {
-  isStartingWorker = false;
-  addLog(`[System] Failed to fork worker: ${e.message}`);
-}
+    addLog("[MinecraftWorker] started as separated process.");
+    isStartingWorker = false;
+  } catch (e) {
+    isStartingWorker = false;
+    addLog(`[System] Failed to fork worker: ${e.message}`);
+  }
 }
 
 function stopMinecraftWorker() {
@@ -514,14 +514,14 @@ setInterval(
     const mem = process.memoryUsage();
     const rssMB = (mem.rss / 1024 / 1024);
     const heapMB = (mem.heapUsed / 1024 / 1024);
-    
+
     // addLog(`[Memory] RSS: ${rssMB.toFixed(2)} MB, Heap: ${heapMB.toFixed(2)} MB`);
 
     if (rssMB > MEMORY_LIMIT_MB) {
       addLog(`[Memory] Memory usage (${rssMB.toFixed(2)} MB) high. Cleaning up...`);
-      
+
       if (global.gc) {
-        try { global.gc(); } catch (e) {}
+        try { global.gc(); } catch (e) { }
       }
 
       if (rssMB > 450) {
@@ -531,7 +531,7 @@ setInterval(
       // Restart process if it hits the near-fatal limit
       if (rssMB > 500) {
         addLog("[Memory] FATAL: Process near 512MB limit. Restarting...");
-        process.exit(1); 
+        process.exit(1);
       }
     }
   },
@@ -558,7 +558,7 @@ function publishMinecraftState() {
     const playerList = (bot && bot.players) ? Object.keys(bot.players) : [];
     const weather = bot ? (bot.isThundering ? "Storming" : (bot.isRaining ? "Raining" : "Clear")) : "Unknown";
     const dimension = (bot && bot.game) ? String(bot.game.dimension || "overworld") : "overworld";
-    
+
     // Format world time
     let timeStr = "Unknown";
     if (bot && bot.time) {
@@ -597,11 +597,11 @@ let workerStateInterval = null;
 // Worker-specific initialization
 if (IS_MINECRAFT_WORKER && process.send) {
   addLog("[Worker] Initializing IPC listeners...");
-  
+
   process.on("message", (message) => {
     if (!message || typeof message !== "object") return;
     const payload = message.payload || {};
-    
+
     if (message.type === "start") {
       if (botRunning) return;
       addLog("[Worker] Start signal received.");
@@ -835,7 +835,7 @@ function createBot() {
         }
         scheduleReconnect();
       }
-    }, 120000); 
+    }, 120000);
 
     // FIX: guard against spawn firing twice (can happen on some servers)
     let spawnHandled = false;
@@ -1771,7 +1771,7 @@ if (!IS_MINECRAFT_WORKER) {
 
 async function main() {
   console.log(`[System] Entering main() as ${IS_MINECRAFT_WORKER ? 'WORKER' : 'MASTER'}`);
-  
+
   if (IS_MINECRAFT_WORKER) {
     addLog("[MinecraftWorker] Mineflayer system standby — waiting for start signal.");
     publishMinecraftState();
@@ -1783,10 +1783,10 @@ async function main() {
     startMinecraftWorker();
     botRunning = true;
     setTimeout(() => {
-        if (minecraftWorker) {
-          addLog("[System] Sending start signal to worker...");
-          sendToMinecraftWorker("start");
-        }
+      if (minecraftWorker) {
+        addLog("[System] Sending start signal to worker...");
+        sendToMinecraftWorker("start");
+      }
     }, 5000); // Wait 5s to ensure worker is ready
   } else {
     botRunning = true;

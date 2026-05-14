@@ -9,7 +9,8 @@
     "ip": "AbsoluteSybau.aternos.me",
     "port": 61097,
     "version": "1.21.11",
-    "try-creative": false
+    "try-creative": false,
+    "software": "PaperMC"
   },
   "position": {
     "enabled": true,
