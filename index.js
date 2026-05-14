@@ -822,7 +822,7 @@ function createBot() {
       auth: config["bot-account"].type,
       host: config.server.ip,
       port: config.server.port,
-      version: false,
+      version: config.server.version,
     });
 
     // SPECTATOR MODE OPTIMIZATION: 
