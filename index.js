@@ -217,10 +217,7 @@ function sendToMinecraftWorker(type, payload = {}) {
   return true;
 }
 
-const IS_RENDER = !!process.env.RENDER_EXTERNAL_URL;
-const ATERNOS_SERVICE_URL = IS_RENDER
-  ? "https://aternosbot-8zes.onrender.com"
-  : "http://localhost:5001";
+const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com"
 
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
   try {
@@ -271,6 +268,14 @@ function startMinecraftWorker() {
 
     minecraftWorker.on("message", (message) => {
       if (!message || typeof message !== "object") return;
+
+      // NEW: Handle ready signal from worker
+      if (message.type === "ready") {
+        addLog("[System] Worker reported READY. Sending start signal...");
+        sendToMinecraftWorker("start");
+        return;
+      }
+
       if (message.type === "state") {
         // MASTER IPC: Update historical stats using session ticks from worker
         if (typeof message.payload.sessionTicks === 'number' && message.payload.connected) {
@@ -614,6 +619,9 @@ let workerStateInterval = null;
 if (IS_MINECRAFT_WORKER && process.send) {
   addLog("[Worker] Initializing IPC listeners...");
 
+  // Send ready signal to master once dependencies are loaded
+  process.send({ type: "ready" });
+
   process.on("message", (message) => {
     if (!message || typeof message !== "object") return;
     const payload = message.payload || {};
@@ -862,6 +870,17 @@ function createBot() {
 
     // FIX: guard against spawn firing twice (can happen on some servers)
     let spawnHandled = false;
+
+    // DEBUG: Log login phase
+    bot.on("login", () => {
+      addLog("[Bot] Login successful! Waiting for spawn...");
+    });
+    
+    if (bot._client) {
+       bot._client.on("inject_allowed", () => {
+          addLog("[Bot] Handshake successful, injecting protocol...");
+       });
+    }
 
     bot.once("spawn", () => {
       if (spawnHandled) return;
@@ -1811,12 +1830,7 @@ async function main() {
     addLog("[System] Starting worker process...");
     startMinecraftWorker();
     botRunning = true;
-    setTimeout(() => {
-      if (minecraftWorker) {
-        addLog("[System] Sending start signal to worker...");
-        sendToMinecraftWorker("start");
-      }
-    }, 5000); // Wait 5s to ensure worker is ready
+    // No more hardcoded 5s delay here, master waits for "ready" message
   } else {
     botRunning = true;
     createBot();
