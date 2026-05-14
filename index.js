@@ -24,8 +24,7 @@ if (IS_MINECRAFT_WORKER && process.send) {
 
   const originalAddLog = addLog;
   addLog = (line) => {
-    // Mirror to console so we can see it even if IPC fails
-    console.log(`[Worker] ${line}`);
+    // Only send to master, do not call originalAddLog (which prints to console)
     try {
       process.send({ type: "log", payload: { line } });
     } catch (e) {
@@ -34,20 +33,15 @@ if (IS_MINECRAFT_WORKER && process.send) {
   };
 }
 
-if (IS_MINECRAFT_WORKER) console.log("[Worker] Loading dependencies...");
 const mineflayer = require("mineflayer");
-if (IS_MINECRAFT_WORKER) console.log("[Worker] Mineflayer loaded.");
 const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
-if (IS_MINECRAFT_WORKER) console.log("[Worker] Pathfinder loaded.");
 const { GoalBlock } = goals;
 const config = require("./settings.json");
-if (IS_MINECRAFT_WORKER) console.log("[Worker] Config loaded.");
 const express = require("express");
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const { fork } = require("child_process");
-if (IS_MINECRAFT_WORKER) console.log("[Worker] All dependencies loaded.");
 
 const USE_SPLIT_MINECRAFT = !IS_MINECRAFT_WORKER && process.env.BOTMINECRAFT_SPLIT !== "false";
 
@@ -59,7 +53,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 5000;
 
 // Stats tracking (Persistent)
-let stats = { totalPlaytime: 8452976 };
+let stats = { totalPlaytime: 0 };
 let memoryStats = {
   totalHeapUsed: 0,
   samples: 0,
@@ -117,41 +111,6 @@ setInterval(() => {
   if (botState.connected) {
     // Note: totalPlaytime is now synced with in-game age delta below
   }
-  
-  // Master process only: sync stats from worker updates
-  // The actual incrementing happens in the IPC handler below
-
-  // Only run bot-specific logic if we actually have a bot instance in THIS process
-  if (bot) {
-    const pData = bot.players ? Object.values(bot.players).map(p => {
-      let pDim = "unknown";
-      if (p && p.entity && p.entity.dimension) {
-         pDim = String(p.entity.dimension);
-      }
-      
-      return {
-        name: p.username,
-        nearby: !!p.entity,
-        dimension: pDim
-      };
-    }) : [];
-    botState.playerCount = pData.length;
-    botState.playerData = pData;
-    botState.weather = (bot.isThundering ? "Storming" : (bot.isRaining ? "Raining" : "Clear"));
-    botState.dimension = bot.game ? String(bot.game.dimension || "overworld") : "overworld";
-    botState.uptime = Number(stats.totalPlaytime || 0);
-    
-    if (bot.time) {
-      const totalTicks = bot.time.timeOfDay || 0;
-      const hours = Math.floor((totalTicks / 1000 + 6) % 24);
-      const minutes = Math.floor((totalTicks % 1000) * 60 / 1000);
-      botState.worldTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-      botState.worldDay = bot.time.day;
-    }
-    if (bot.entity && bot.entity.position) {
-      botState.coords = { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z };
-    }
-  }
 }, 10000); // Increased interval to 10s to reduce CPU/Memory churn
 
 // Also save stats on exit
@@ -170,7 +129,7 @@ process.on("SIGTERM", () => {
 
 // Load HTML templates once at startup
 const templates = {};
-const templateFiles = ["dashboard.html", "logs.html"];
+const templateFiles = ["dashboard.html", "tutorial.html", "logs.html"];
 
 templateFiles.forEach(f => {
   try {
@@ -210,7 +169,7 @@ app.get("/health", (req, res) => {
     avgMemory: memoryStats.avgHeapUsed,
     // Enhanced World Data
     playerCount: state.playerCount || 0,
-    playerData: state.playerData || [],
+    playerNames: state.playerNames || [],
     weather: state.weather || "Unknown",
     dimension: state.dimension || "overworld",
     worldTime: state.worldTime || "Unknown",
@@ -229,6 +188,11 @@ let minecraftSnapshot = {
   connected: false,
   reconnecting: false,
   coords: null,
+  playerCount: 0,
+  playerNames: [],
+  weather: "Unknown",
+  worldTime: "Unknown",
+  worldDay: 0
 };
 
 function sendToMinecraftWorker(type, payload = {}) {
@@ -317,10 +281,23 @@ function startMinecraftWorker() {
   minecraftWorker.on("exit", (code, signal) => {
     addLog(`[MinecraftWorker] exited code=${code ?? "null"} signal=${signal ?? "null"}`);
     minecraftWorker = null;
-    minecraftSnapshot = { bot: null, connected: false, reconnecting: false, coords: null };
+    minecraftSnapshot = {
+      bot: null, connected: false, reconnecting: false, coords: null,
+      playerCount: 0, playerNames: [], weather: "Unknown", worldTime: "Unknown", worldDay: 0
+    };
     botState.connected = false;
     if (botRunning) {
-      setTimeout(startMinecraftWorker, 5000);
+      addLog("[System] Bot was running, restarting worker in 5s...");
+      setTimeout(() => {
+        startMinecraftWorker();
+        // Automatically send start signal after worker starts
+        setTimeout(() => {
+          if (botRunning && minecraftWorker) {
+            addLog("[System] Auto-sending start signal to restarted worker.");
+            sendToMinecraftWorker("start");
+          }
+        }, 3000);
+      }, 5000);
     }
   });
 
@@ -341,7 +318,7 @@ function stopMinecraftWorker() {
 }
 
 app.post("/start", (req, res) => {
-  if (botRunning) return res.json({ success: false, msg: "Already running" });
+  if (botRunning || isConnecting) return res.json({ success: true, msg: "Already in progress" });
 
   botRunning = true;
   resetReconnectState();
@@ -351,11 +328,11 @@ app.post("/start", (req, res) => {
 
   if (USE_SPLIT_MINECRAFT) {
     startMinecraftWorker();
-    sendToMinecraftWorker("start");
+    setTimeout(() => sendToMinecraftWorker("start"), 1000);
   } else {
     createBot();
   }
-  addLog("[Control] Bot started");
+  addLog("[Control] Bot started via HTTP");
 
   res.json({ success: true });
 });
@@ -364,6 +341,7 @@ app.post("/stop", (req, res) => {
   if (!botRunning) return res.json({ success: false, msg: "Already stopped" });
 
   botRunning = false;
+  isConnecting = false;
   resetReconnectState();
   if (USE_SPLIT_MINECRAFT) {
     stopMinecraftWorker();
@@ -577,20 +555,8 @@ function publishMinecraftState() {
       botState.lastTickTime = null;
     }
 
-    const pData = (bot && bot.players) ? Object.values(bot.players).map(p => {
-      // FIX: do NOT use JSON.stringify on player objects (circular refs will crash)
-      let pDim = "unknown";
-      if (p && p.entity && p.entity.dimension) {
-         pDim = String(p.entity.dimension);
-      }
-      return {
-        name: p.username,
-        nearby: !!p.entity,
-        dimension: pDim
-      };
-    }) : [];
-
-    const weather = bot ? (bot.isThundering ? "Storming" : bot.isRaining ? "Raining" : "Clear") : "Unknown";
+    const playerList = (bot && bot.players) ? Object.keys(bot.players) : [];
+    const weather = bot ? (bot.isThundering ? "Storming" : (bot.isRaining ? "Raining" : "Clear")) : "Unknown";
     const dimension = (bot && bot.game) ? String(bot.game.dimension || "overworld") : "overworld";
     
     // Format world time
@@ -613,8 +579,8 @@ function publishMinecraftState() {
         lastPacket: botState.lastPacket,
         reconnectAttempts: botState.reconnectAttempts,
         sessionTicks: sessionTicks,
-        playerCount: pData.length,
-        playerData: pData,
+        playerCount: playerList.length,
+        playerNames: playerList,
         weather: weather,
         dimension: dimension,
         worldTime: timeStr,
@@ -726,6 +692,7 @@ function disconnectCurrentBot(reason) {
   clearBotTimeouts();
   botState.connected = false;
   isReconnecting = false;
+  isConnecting = false;
 
   if (!bot) return;
 
@@ -744,7 +711,9 @@ let lastDiscordSend = 0;
 const DISCORD_RATE_LIMIT_MS = 5000; // min 5s between webhook calls
 
 function clearAllIntervals() {
-  addLog(`[Cleanup] Clearing ${activeIntervals.length} intervals`);
+  if (activeIntervals.length > 0) {
+    addLog(`[Cleanup] Clearing ${activeIntervals.length} intervals`);
+  }
   activeIntervals.forEach((id) => clearInterval(id));
   activeIntervals = [];
 }
@@ -788,6 +757,7 @@ function createBot() {
 
   if (!botRunning) {
     addLog("[Bot] Bot is stopped, skipping connect.");
+    isConnecting = false;
     return;
   }
 
@@ -857,6 +827,7 @@ function createBot() {
     connectionTimeoutId = setTimeout(() => {
       if (botRunning && !botState.connected) {
         addLog("[Bot] Connection timeout - no spawn received within 120s.");
+        isConnecting = false;
         notifyAternosToStart("connection-timeout");
         if (!forceAutoDetectVersion && config.server.version && config.server.version.trim() !== "") {
           forceAutoDetectVersion = true;
@@ -925,35 +896,12 @@ function createBot() {
       });
 
       bot.on("game", () => enforceOverworld(bot, "game update"));
-
-      // Request statistics from server periodically to get authoritative playtime
-      const requestStats = () => {
-        if (bot && bot._client && botState.connected) {
-          try {
-            // Action ID 1 requests statistics
-            bot._client.write('client_command', { actionId: 1 });
-          } catch (e) {}
-        }
-      };
-
-      // Initial request and then every 5 minutes
-      setTimeout(requestStats, 10000);
-      addInterval(requestStats, 5 * 60 * 1000);
-
-      // Fallback: listen to raw client packets if Mineflayer event doesn't fire
-      if (bot._client) {
-        bot._client.on('statistics', (packet) => {
-          if (!packet || !packet.entries) return;
-          // If we get here, the statistics event above should also fire,
-          // but this confirms the server is actually sending the packet.
-          // addLog(`[Debug] Raw statistics packet received with ${packet.entries.length} entries`);
-        });
-      }
     });
 
     // FIX: 'kicked' fires before 'end'. Remove the scheduleReconnect from 'kicked'
     // so that 'end' is the single source of reconnect truth, preventing double-trigger.
     bot.on("kicked", (reason) => {
+      isConnecting = false;
       // FIX: stringify reason if it's an object to make it readable in logs
       const kickReason =
         typeof reason === "object" ? JSON.stringify(reason) : reason;
@@ -999,8 +947,8 @@ function createBot() {
 
     // FIX: 'end' is the single reconnect trigger
     bot.on("end", (reason) => {
-      addLog(`[Bot] Disconnected: ${reason || "socketClosed"}`);
       isConnecting = false;
+      addLog(`[Bot] Disconnected: ${reason || "socketClosed"}`);
       botState.connected = false;
       clearAllIntervals();
       spawnHandled = false; // reset for next connection
@@ -1039,6 +987,7 @@ function createBot() {
       // Don't reconnect on error - let 'end' event handle it
     });
   } catch (err) {
+    isConnecting = false;
     addLog(`[Bot] Failed to create bot: ${err.message}`);
     const msg = String(err.message || err).toLowerCase();
     if (
@@ -1721,6 +1670,7 @@ process.on("uncaughtException", (err) => {
   // ALWAYS recover — bot must never stay disconnected
   clearAllIntervals();
   botState.connected = false;
+  isConnecting = false;
 
   // FIX: reset isReconnecting if it was stuck, then schedule reconnect
   if (isReconnecting) {
@@ -1780,6 +1730,7 @@ process.on("unhandledRejection", (reason) => {
       addLog("[FATAL] Network rejection — triggering reconnect...");
       clearAllIntervals();
       botState.connected = false;
+      isConnecting = false;
       if (bot) {
         try { bot.end(); } catch (_) { }
         bot = null;
@@ -1832,8 +1783,10 @@ async function main() {
     startMinecraftWorker();
     botRunning = true;
     setTimeout(() => {
-        addLog("[System] Sending start signal to worker...");
-        sendToMinecraftWorker("start");
+        if (minecraftWorker) {
+          addLog("[System] Sending start signal to worker...");
+          sendToMinecraftWorker("start");
+        }
     }, 5000); // Wait 5s to ensure worker is ready
   } else {
     botRunning = true;
@@ -1843,5 +1796,7 @@ async function main() {
 
 console.log("[System] Script fully loaded, calling main()...");
 main().catch(err => {
-  addLog(`[FATAL] Startup error: ${err.stack || err.message}`);
+  if (!IS_MINECRAFT_WORKER) {
+    addLog(`[FATAL] Startup error: ${err.stack || err.message}`);
+  }
 });
