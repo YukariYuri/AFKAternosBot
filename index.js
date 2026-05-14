@@ -14,22 +14,40 @@ let { addLog, getLogs } = require("./logger");
 // FIX: Prevent worker from logging locally to console.
 // Worker logs will only be printed by the master process to avoid visual duplication.
 if (IS_MINECRAFT_WORKER && process.send) {
+  // Global error handler for worker
+  process.on("uncaughtException", (err) => {
+    const msg = `[WORKER FATAL ERROR] ${err.stack || err.message || err}`;
+    console.error(msg); 
+    try { process.send({ type: "log", payload: { line: msg } }); } catch (e) {}
+    process.exit(1);
+  });
+
   const originalAddLog = addLog;
   addLog = (line) => {
-    // Only send to master, do not call originalAddLog (which prints to console)
-    process.send({ type: "log", payload: { line } });
+    // Mirror to console so we can see it even if IPC fails
+    console.log(`[Worker] ${line}`);
+    try {
+      process.send({ type: "log", payload: { line } });
+    } catch (e) {
+      // Ignore IPC send errors
+    }
   };
 }
 
+if (IS_MINECRAFT_WORKER) console.log("[Worker] Loading dependencies...");
 const mineflayer = require("mineflayer");
+if (IS_MINECRAFT_WORKER) console.log("[Worker] Mineflayer loaded.");
 const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
+if (IS_MINECRAFT_WORKER) console.log("[Worker] Pathfinder loaded.");
 const { GoalBlock } = goals;
 const config = require("./settings.json");
+if (IS_MINECRAFT_WORKER) console.log("[Worker] Config loaded.");
 const express = require("express");
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const { fork } = require("child_process");
+if (IS_MINECRAFT_WORKER) console.log("[Worker] All dependencies loaded.");
 
 const USE_SPLIT_MINECRAFT = !IS_MINECRAFT_WORKER && process.env.BOTMINECRAFT_SPLIT !== "false";
 
@@ -106,16 +124,10 @@ setInterval(() => {
   // Only run bot-specific logic if we actually have a bot instance in THIS process
   if (bot) {
     const pData = bot.players ? Object.values(bot.players).map(p => {
-      // Deep search helper to find keywords in any object structure
-      const findDim = (obj) => {
-        const str = JSON.stringify(obj).toLowerCase();
-        if (str.includes("overworld")) return "overworld";
-        if (str.includes("nether")) return "nether";
-        if (str.includes("end")) return "end";
-        return null;
-      };
-
-      const pDim = findDim(p) || "unknown";
+      let pDim = "unknown";
+      if (p && p.entity && p.entity.dimension) {
+         pDim = String(p.entity.dimension);
+      }
       
       return {
         name: p.username,
@@ -125,21 +137,22 @@ setInterval(() => {
     }) : [];
     botState.playerCount = pData.length;
     botState.playerData = pData;
-    botState.weather = bot.isThundering ? "Storming" : bot.isRaining ? "Raining" : "Clear";
-    botState.dimension = bot.game ? bot.game.dimension : "overworld";
+    botState.weather = (bot.isThundering ? "Storming" : (bot.isRaining ? "Raining" : "Clear"));
+    botState.dimension = bot.game ? String(bot.game.dimension || "overworld") : "overworld";
     botState.uptime = Number(stats.totalPlaytime || 0);
     
     if (bot.time) {
-      const totalTicks = bot.time.timeOfDay;
+      const totalTicks = bot.time.timeOfDay || 0;
       const hours = Math.floor((totalTicks / 1000 + 6) % 24);
       const minutes = Math.floor((totalTicks % 1000) * 60 / 1000);
       botState.worldTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
       botState.worldDay = bot.time.day;
     }
-    if (bot.entity && bot.entity.position) botState.coords = bot.entity.position;
+    if (bot.entity && bot.entity.position) {
+      botState.coords = { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z };
+    }
   }
-},
-  10000); // Increased interval to 10s to reduce CPU/Memory churn
+}, 10000); // Increased interval to 10s to reduce CPU/Memory churn
 
 // Also save stats on exit
 process.on("SIGINT", () => {
@@ -157,7 +170,7 @@ process.on("SIGTERM", () => {
 
 // Load HTML templates once at startup
 const templates = {};
-const templateFiles = ["dashboard.html", "tutorial.html", "logs.html"];
+const templateFiles = ["dashboard.html", "logs.html"];
 
 templateFiles.forEach(f => {
   try {
@@ -542,115 +555,107 @@ setInterval(
   },
   60 * 1000, // Check every minute
 );
-
 function publishMinecraftState() {
   if (!IS_MINECRAFT_WORKER || !process.send) return;
 
-  // Track session ticks ONLY while connected
-  let sessionTicks = 0;
-  if (botState.connected) {
-    const now = Date.now();
-    if (!botState.sessionStartTime) botState.sessionStartTime = now;
-    const lastTickTime = botState.lastTickTime || now;
-    sessionTicks = Math.floor((now - lastTickTime) / 50);
-    botState.lastTickTime = now;
-  } else {
-    // Reset timers when not connected to ensure fresh start on next spawn
-    botState.sessionStartTime = null;
-    botState.lastTickTime = null;
+  try {
+    // Track session ticks ONLY while connected
+    let sessionTicks = 0;
+    if (botState.connected) {
+      const now = Date.now();
+      if (!botState.sessionStartTime) botState.sessionStartTime = now;
+      const lastTickTime = botState.lastTickTime || now;
+      sessionTicks = Math.floor((now - lastTickTime) / 50);
+      botState.lastTickTime = now;
+    } else {
+      // Reset timers when not connected to ensure fresh start on next spawn
+      botState.sessionStartTime = null;
+      botState.lastTickTime = null;
+    }
+
+    const pData = (bot && bot.players) ? Object.values(bot.players).map(p => {
+      // FIX: do NOT use JSON.stringify on player objects (circular refs will crash)
+      let pDim = "unknown";
+      if (p && p.entity && p.entity.dimension) {
+         pDim = String(p.entity.dimension);
+      }
+      return {
+        name: p.username,
+        nearby: !!p.entity,
+        dimension: pDim
+      };
+    }) : [];
+
+    const weather = bot ? (bot.isThundering ? "Storming" : bot.isRaining ? "Raining" : "Clear") : "Unknown";
+    const dimension = (bot && bot.game) ? String(bot.game.dimension || "overworld") : "overworld";
+    
+    // Format world time
+    let timeStr = "Unknown";
+    if (bot && bot.time) {
+      const totalTicks = bot.time.timeOfDay || 0;
+      const hours = Math.floor((totalTicks / 1000 + 6) % 24);
+      const minutes = Math.floor((totalTicks % 1000) * 60 / 1000);
+      timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+    }
+
+    process.send({
+      type: "state",
+      payload: {
+        hasBot: Boolean(bot),
+        connected: botState.connected,
+        reconnecting: isReconnecting,
+        coords: (bot && bot.entity) ? { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z } : null,
+        lastActivity: botState.lastActivity,
+        lastPacket: botState.lastPacket,
+        reconnectAttempts: botState.reconnectAttempts,
+        sessionTicks: sessionTicks,
+        playerCount: pData.length,
+        playerData: pData,
+        weather: weather,
+        dimension: dimension,
+        worldTime: timeStr,
+        worldDay: (bot && bot.time) ? bot.time.day : 0
+      },
+    });
+  } catch (err) {
+    // Non-fatal error for state sync
+    console.error(`[Worker State Error] ${err.message}`);
   }
-
-  const pData = bot && bot.players ? Object.values(bot.players).map(p => {
-    const findDim = (obj) => {
-      const str = JSON.stringify(obj).toLowerCase();
-      if (str.includes("overworld")) return "overworld";
-      if (str.includes("nether")) return "nether";
-      if (str.includes("end")) return "end";
-      return null;
-    };
-    const pDim = findDim(p) || "unknown";
-
-    return {
-      name: p.username,
-      nearby: !!p.entity,
-      dimension: pDim
-    };
-  }) : [];
-  const weather = bot ? (bot.isThundering ? "Storming" : bot.isRaining ? "Raining" : "Clear") : "Unknown";
-  const dimension = bot && bot.game ? bot.game.dimension : "overworld";
-  
-  // Format world time
-  let timeStr = "Unknown";
-  if (bot && bot.time) {
-    const totalTicks = bot.time.timeOfDay;
-    const hours = Math.floor((totalTicks / 1000 + 6) % 24);
-    const minutes = Math.floor((totalTicks % 1000) * 60 / 1000);
-    timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-  }
-
-  process.send({
-    type: "state",
-    payload: {
-      hasBot: Boolean(bot),
-      connected: botState.connected,
-      reconnecting: isReconnecting,
-      coords: bot && bot.entity ? bot.entity.position : null,
-      lastActivity: botState.lastActivity,
-      lastPacket: botState.lastPacket,
-      reconnectAttempts: botState.reconnectAttempts,
-      sessionTicks: sessionTicks,
-      playerCount: pData.length,
-      playerData: pData,
-      weather: weather,
-      dimension: dimension,
-      worldTime: timeStr,
-      worldDay: bot && bot.time ? bot.time.day : 0
-    },
-  });
 }
 
+let workerStateInterval = null;
+// Worker-specific initialization
 if (IS_MINECRAFT_WORKER && process.send) {
-  setInterval(publishMinecraftState, 2000);
-
+  addLog("[Worker] Initializing IPC listeners...");
+  
   process.on("message", (message) => {
     if (!message || typeof message !== "object") return;
     const payload = message.payload || {};
+    
     if (message.type === "start") {
       if (botRunning) return;
+      addLog("[Worker] Start signal received.");
       botRunning = true;
       resetReconnectState();
       createBot();
+      if (!workerStateInterval) {
+        workerStateInterval = setInterval(publishMinecraftState, 2000);
+      }
       publishMinecraftState();
-      return;
-    }
-    if (message.type === "stop") {
+    } else if (message.type === "stop") {
+      addLog("[Worker] Stop signal received.");
       botRunning = false;
       disconnectCurrentBot("dashboard-stop");
       publishMinecraftState();
-      return;
-    }
-    if (message.type === "connect") {
-      createBot();
-      publishMinecraftState();
-      return;
-    }
-    if (message.type === "disconnect") {
-      disconnectCurrentBot(payload.reason || "dashboard-disconnect");
-      publishMinecraftState();
-      return;
-    }
-    if (message.type === "command") {
+    } else if (message.type === "command") {
       const cmd = String(payload.command || "").trim();
-      if (!cmd) return;
-      if (!bot || typeof bot.chat !== "function") {
-        addLog("[Console] Bot is not running.");
-        return;
-      }
-      try {
-        bot.chat(cmd);
-        addLog(`[Console] Sent to server: ${cmd}`);
-      } catch (err) {
-        addLog(`[Console] Error: ${err.message}`);
+      if (cmd && bot && typeof bot.chat === "function") {
+        try {
+          bot.chat(cmd);
+          addLog(`[Console] Sent: ${cmd}`);
+        } catch (err) {
+          addLog(`[Console] Error: ${err.message}`);
+        }
       }
     }
   });
@@ -1045,6 +1050,7 @@ function createBot() {
 
 function scheduleReconnect() {
   clearBotTimeouts();
+  isConnecting = false; // Reset lock to allow fresh start
 
   if (!botRunning || !config.utils["auto-reconnect"]) {
     isReconnecting = false;
@@ -1807,29 +1813,29 @@ if (!IS_MINECRAFT_WORKER) {
 }
 
 async function main() {
+  console.log(`[System] Entering main() as ${IS_MINECRAFT_WORKER ? 'WORKER' : 'MASTER'}`);
+  
   if (IS_MINECRAFT_WORKER) {
     addLog("[MinecraftWorker] Mineflayer system standby — waiting for start signal.");
-    // createBot() will be called when "start" message is received from master
     publishMinecraftState();
     return;
   }
 
   if (USE_SPLIT_MINECRAFT) {
+    addLog("[System] Starting worker process...");
     startMinecraftWorker();
-    // Mark as running so that future /start calls are ignored
     botRunning = true;
-    // In split mode, the master waits for the worker to be ready or simply sends the start command
     setTimeout(() => {
+        addLog("[System] Sending start signal to worker...");
         sendToMinecraftWorker("start");
-    }, 2000);
+    }, 5000); // Wait 5s to ensure worker is ready
   } else {
     botRunning = true;
     createBot();
   }
 }
 
+console.log("[System] Script fully loaded, calling main()...");
 main().catch(err => {
-  if (!IS_MINECRAFT_WORKER) {
-    addLog(`[FATAL] Startup error: ${err.message}`);
-  }
+  addLog(`[FATAL] Startup error: ${err.stack || err.message}`);
 });
