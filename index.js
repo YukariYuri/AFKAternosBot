@@ -6,19 +6,17 @@ require("dotenv").config();
 // Determine if this process is the Minecraft worker or the master
 const IS_MINECRAFT_WORKER = process.env.BOTMINECRAFT_ROLE === "minecraft"; // Must be first to determine role
 
-// นำเข้าระบบ Keep Alive
-const keep_alive = require("./keep_alive.js");
-
-// Global variables for bot state (shared by master and worker processes)
-let botRunning = false; // Master's view of whether bot should be running
-let isConnecting = false; // Master's view of whether bot is connecting
 let bot = null; // Mineflayer bot instance (only initialized in worker or non-split master)
 let activeIntervals = []; // For bot's internal intervals
 let reconnectTimeoutId = null; // For bot's reconnect timer
+let minecraftWorker = null; // Declare globally for Master
 let connectionTimeoutId = null; // For bot's initial connection timeout
 let isReconnecting = false; // For bot's reconnect state
 let forceAutoDetectVersion = false; // For bot's version fallback
 
+// Global variables for bot state (shared by master and worker processes)
+let botRunning = false; // Master's view of whether bot should be running
+let isConnecting = false; // Master's view of whether bot is connecting
 const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com"; // URL for Aternos Bot service
 
 let { addLog, getLogs } = require("./logger");
@@ -76,7 +74,7 @@ const USE_SPLIT_MINECRAFT = !IS_MINECRAFT_WORKER && process.env.BOTMINECRAFT_SPL
 // ============================================================
 const app = express();
 app.use(express.json());
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 6575;
 
 // Stats tracking (Persistent)
 let stats = { totalPlaytime: 0 };
@@ -206,7 +204,6 @@ app.get("/health", (req, res) => {
 app.get("/ping", (req, res) => res.send("pong"));
 
 
-let minecraftWorker = null;
 let minecraftSnapshot = {
   bot: null,
   connected: false,
@@ -226,7 +223,6 @@ function sendToMinecraftWorker(type, payload = {}) {
   addLog(`[Worker] Sent ${type} to Minecraft worker.`);
   return true;
 }
-
 let lastAternosNotification = 0;
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
   const now = Date.now();
@@ -258,6 +254,40 @@ async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
   } catch (err) {
     // Ignore errors
   }
+}
+
+/**
+ * ฟังก์ชันช่วยตรวจสอบสถานะจาก BotAternos
+ */
+async function checkAternosStatus() {
+  return new Promise((resolve) => {
+    try {
+      const url = new URL(`${ATERNOS_SERVICE_URL}/aternos/status`);
+      const protocol = url.protocol === "https:" ? https : http;
+      const options = {
+        hostname: url.hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: url.pathname,
+        method: "GET",
+        timeout: 5000
+      };
+
+      const req = protocol.request(options, (res) => {
+        let data = "";
+        res.on("data", (chunk) => data += chunk);
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(data);
+            resolve(json.aternos?.status || null);
+          } catch (e) { resolve(null); }
+        });
+      });
+
+      req.on("error", () => resolve(null));
+      req.on("timeout", () => { req.destroy(); resolve(null); });
+      req.end();
+    } catch (e) { resolve(null); }
+  });
 }
 
 let isStartingWorker = false;
@@ -537,11 +567,6 @@ function formatUptime(ticks) {
   return res.trim();
 }
 
-// เรียกใช้งานระบบ Keep Alive เฉพาะใน Master Process
-if (!IS_MINECRAFT_WORKER) {
-  keep_alive(addLog);
-}
-
 // ============================================================
 // MEMORY MONITORING (STRICT LIMIT)
 // ============================================================
@@ -631,7 +656,7 @@ function enforceOverworld(currentBot, source) {
   }
 }
 
-function disconnectCurrentBot(reason) {
+async function disconnectCurrentBot(reason) {
   clearAllIntervals();
   clearBotTimeouts();
   botState.connected = false;
@@ -668,7 +693,7 @@ function addInterval(callback, delay) {
   return id;
 }
 
-function getReconnectDelay() {
+function getReconnectDelay(forceOfflineWait) {
   if (botState.wasThrottled) {
     botState.wasThrottled = false;
     const throttleDelay = 60000 + Math.floor(Math.random() * 60000);
@@ -701,7 +726,7 @@ function getReconnectDelay() {
   return delay + jitter;
 }
 
-function createBot() {
+async function createBot() {
   // สำรองค่า IP ปัจจุบันไว้ (กรณีเป็น Numerical IP จาก AternosController)
   const currentIp = config.server.ip;
   const currentPort = config.server.port;
@@ -986,7 +1011,7 @@ function createBot() {
   }
 }
 
-function scheduleReconnect() {
+function scheduleReconnect(overrideDelay) {
   clearBotTimeouts();
   isConnecting = false; // Reset lock to allow fresh start
 
@@ -1005,10 +1030,12 @@ function scheduleReconnect() {
   isReconnecting = true;
   botState.reconnectAttempts++;
 
-  const delay = getReconnectDelay();
-  addLog(
-    `[Bot] Reconnecting in ${delay / 1000}s (attempt #${botState.reconnectAttempts})`,
-  );
+    const delay = overrideDelay || getReconnectDelay(botState.offlineDelay);
+    botState.offlineDelay = false; // Reset สถานะหลังจากนำมาใช้แล้ว
+
+    addLog(
+      `[Bot] Reconnecting in ${delay / 1000}s (Attempt #${botState.reconnectAttempts})`,
+    );
 
   reconnectTimeoutId = setTimeout(() => {
     reconnectTimeoutId = null;
@@ -1752,12 +1779,62 @@ if (!IS_MINECRAFT_WORKER) {
   addLog("=".repeat(50));
 }
 
+function publishMinecraftState() {
+  if (!IS_MINECRAFT_WORKER || !process.send) return;
+  try {
+    process.send({
+      type: "state",
+      payload: {
+        connected: botState.connected,
+        reconnecting: isReconnecting,
+        coords: bot?.entity?.position || null,
+        playerCount: bot ? Object.keys(bot.players).length : 0,
+        playerNames: bot ? Object.keys(bot.players) : [],
+        health: bot ? bot.health : 20,
+        food: bot ? bot.food : 20,
+        lastActivity: botState.lastActivity,
+        lastPacket: botState.lastPacket,
+        reconnectAttempts: botState.reconnectAttempts,
+        hasBot: !!bot
+      }
+    });
+  } catch (e) {}
+}
+
 async function main() {
   console.log(`[System] Entering main() as ${IS_MINECRAFT_WORKER ? 'WORKER' : 'MASTER'}`);
 
   if (IS_MINECRAFT_WORKER) {
     addLog("[MinecraftWorker] Mineflayer system standby — waiting for start signal.");
+    
+    // Listen for master's commands
+    process.on("message", (message) => {
+      if (!message || typeof message !== "object") return;
+
+      if (message.type === "start") {
+        if (message.payload && message.payload.ip) {
+          config.server.ip = message.payload.ip;
+          config.server.port = parseInt(message.payload.port, 10);
+        }
+        botRunning = true;
+        createBot();
+      } else if (message.type === "stop") {
+        botRunning = false;
+        disconnectCurrentBot("master-stop");
+      } else if (message.type === "command" && message.payload.command) {
+        if (bot && typeof bot.chat === "function") {
+          bot.chat(message.payload.command);
+        }
+      }
+    });
+
+    // Report ready to master
+    if (process.send) process.send({ type: "ready" });
+    
     publishMinecraftState();
+    
+    // Periodic state updates
+    setInterval(publishMinecraftState, 5000);
     return;
   }
 
@@ -1778,3 +1855,4 @@ main().catch(err => {
     addLog(`[FATAL] Startup error: ${err.stack || err.message}`);
   }
 });
+// End of script
