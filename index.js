@@ -710,13 +710,13 @@ function getReconnectDelay(forceOfflineWait) {
   }
 
   // ปรับจังหวะการเชื่อมต่อใหม่ให้เสถียรสำหรับเครือข่าย Render
-  const baseDelay = config.utils["auto-reconnect-delay"] || 30000;
-  const maxDelay = config.utils["max-reconnect-delay"] || 180000;
+  const baseDelay = config.utils["auto-reconnect-delay"] || 15000;
+  const maxDelay = config.utils["max-reconnect-delay"] || 45000;
 
   let delay;
   if (botState.reconnectAttempts <= 3) {
     // 3 ครั้งแรกให้รออย่างน้อย 45-60 วินาที เพื่อให้ Aternos Proxy พร้อม
-    delay = 60000;
+    delay = 15000;
   } else {
     // หลังจากนั้นใช้ Exponential Backoff (เพิ่มทีละ 1.5 เท่า) เพื่อไม่ให้โดนแบน IP
     delay = Math.min(baseDelay * Math.pow(1.5, botState.reconnectAttempts - 3), maxDelay);
@@ -787,8 +787,8 @@ async function createBot() {
       port: config.server.port,
       fakeHost: "AbsoluteSybau.aternos.me",
       version: config.server.version,
-      connectTimeout: 90000, 
-      checkTimeoutInterval: 90000,
+      connectTimeout: 6000, 
+      checkTimeoutInterval: 6000,
       keepAlive: true,
     });
 
