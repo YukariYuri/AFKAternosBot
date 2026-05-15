@@ -18,10 +18,10 @@ if (IS_MINECRAFT_WORKER && process.send) {
   process.on("uncaughtException", (err) => {
     const msg = String(err.message || err);
     const stack = err.stack || msg;
-    
+
     // Only log once
     addLog(`[WORKER ERROR] ${msg}`);
-    
+
     // If it's a known network error, don't crash the worker, just reconnect
     if (msg.includes('ETIMEDOUT') || msg.includes('ECONNRESET') || msg.includes('EPIPE') || msg.includes('keepAliveError')) {
       if (typeof scheduleReconnect === 'function') {
@@ -29,7 +29,7 @@ if (IS_MINECRAFT_WORKER && process.send) {
         return;
       }
     }
-    
+
     // For other fatal errors, log stack and exit
     console.error(`[WORKER FATAL] ${stack}`);
     process.exit(1);
@@ -39,7 +39,7 @@ if (IS_MINECRAFT_WORKER && process.send) {
     addLog(`[Worker Unhandled Rejection] ${reason}`);
   });
 
-const originalAddLog = addLog;
+  const originalAddLog = addLog;
   addLog = (line) => {
     // Only send to master, do not call originalAddLog (which prints to console)
     try {
@@ -347,23 +347,23 @@ app.post("/start", (req, res) => {
   if (req.body.ip && req.body.port) {
     const oldTarget = `${config.server.ip}:${config.server.port}`;
     const newTarget = `${req.body.ip}:${req.body.port}`;
-    
+
     if (oldTarget !== newTarget) {
       addLog(`[Control] Server target changed: ${oldTarget} -> ${newTarget}. Resetting bot...`);
-      
+
       // Force cleanup of current connection/bot
       if (USE_SPLIT_MINECRAFT) {
         stopMinecraftWorker();
       } else {
         disconnectCurrentBot("port-change");
       }
-      
+
       // Update config
       config.server.ip = req.body.ip;
       config.server.port = parseInt(req.body.port, 10);
-      
+
       // Reset flags to allow immediate restart
-      botRunning = false; 
+      botRunning = false;
       isConnecting = false;
       isReconnecting = false;
     }
@@ -664,11 +664,11 @@ if (IS_MINECRAFT_WORKER && process.send) {
     if (message.type === "start") {
       if (botRunning) return;
       addLog("[Worker] Start signal received.");
-      
+
       // Update IP/Port if provided in IPC message
       if (payload.ip && payload.port) {
-         config.server.ip = payload.ip;
-         config.server.port = parseInt(payload.port, 10);
+        config.server.ip = payload.ip;
+        config.server.port = parseInt(payload.port, 10);
       }
 
       botRunning = true;
@@ -812,7 +812,7 @@ function getReconnectDelay() {
 
   // If online but failing, use 10s for first few attempts to catch it quickly when ready
   if (botState.reconnectAttempts < 3) {
-     return 10000 + Math.floor(Math.random() * 2000);
+    return 30000 + Math.floor(Math.random() * 5000); // เพิ่มเป็น 30 วินาทีในช่วง 3 ครั้งแรก
   }
 
   const delay = Math.min(
@@ -873,9 +873,9 @@ function createBot() {
       host: config.server.ip,
       port: config.server.port,
       version: config.server.version,
-      // เพิ่มเวลาการรอเชื่อมต่อเป็น 90 วินาทีสำหรับ Proxy ของ Aternos ที่ช้า
-      connectTimeout: 90000,
-      checkTimeoutInterval: 90000,
+      // เพิ่มเวลาเป็น 120 วินาที เพราะ Aternos Proxy มักจะค้างในช่วงแรก
+      connectTimeout: 120000,
+      checkTimeoutInterval: 120000,
       keepAlive: true,
     });
 
@@ -910,11 +910,11 @@ function createBot() {
     bot.on("login", () => {
       addLog("[Bot] Login successful! Waiting for spawn...");
     });
-    
+
     if (bot._client) {
-       bot._client.on("inject_allowed", () => {
-          addLog("[Bot] Handshake successful, injecting protocol...");
-       });
+      bot._client.on("inject_allowed", () => {
+        addLog("[Bot] Handshake successful, injecting protocol...");
+      });
     }
 
     bot.once("spawn", () => {
@@ -980,19 +980,19 @@ function createBot() {
     bot.on("kicked", (reason) => {
       isConnecting = false;
       let kickReason = typeof reason === "object" ? JSON.stringify(reason) : String(reason);
-      
+
       // FIX: Better JSON kick message parsing
       try {
-         const parsed = JSON.parse(kickReason);
-         if (parsed.text === "" && parsed.extra) {
-            kickReason = parsed.extra.map(e => e.text).join("");
-         } else if (parsed.text) {
-            kickReason = parsed.text;
-         }
-      } catch(e) {}
+        const parsed = JSON.parse(kickReason);
+        if (parsed.text === "" && parsed.extra) {
+          kickReason = parsed.extra.map(e => e.text).join("");
+        } else if (parsed.text) {
+          kickReason = parsed.text;
+        }
+      } catch (e) { }
 
       addLog(`[Bot] Kicked: ${kickReason}`);
-      
+
       // FIX: If duplicate login, wait longer to let the server clear the old session
       if (kickReason.includes("duplicate_login") || kickReason.includes("already logged in")) {
         addLog("[Bot] Duplicate login detected. Waiting 15s for session to clear...");
