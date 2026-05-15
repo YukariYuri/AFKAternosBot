@@ -810,44 +810,38 @@ function getReconnectDelay() {
     return 30000 + Math.floor(Math.random() * 5000);
   }
 
-  // FIX: read auto-reconnect-delay from settings as base delay
-  const baseDelay = config.utils["auto-reconnect-delay"] || 5000; // Default 5s
-  const maxDelay = config.utils["max-reconnect-delay"] || 60000; // Default 60s
+  // ปรับจังหวะการเชื่อมต่อใหม่ให้เสถียรสำหรับเครือข่าย Render
+  const baseDelay = config.utils["auto-reconnect-delay"] || 30000;
+  const maxDelay = config.utils["max-reconnect-delay"] || 180000;
 
   let delay;
-  const minInitialDelay = 45000; // Minimum delay for first few attempts on Render
-
-  if (botState.reconnectAttempts <= 3) { // สำหรับการเชื่อมต่อครั้งที่ 1, 2, 3
-    delay = minInitialDelay + Math.floor(Math.random() * 5000);
+  if (botState.reconnectAttempts <= 3) {
+    // 3 ครั้งแรกให้รออย่างน้อย 45-60 วินาที เพื่อให้ Aternos Proxy พร้อม
+    delay = 60000;
   } else {
-    // ใช้ Exponential backoff สำหรับการเชื่อมต่อครั้งถัดไป (เริ่มจากครั้งที่ 4)
-    const attemptFactor = Math.pow(2, botState.reconnectAttempts - 3);
-    delay = baseDelay * attemptFactor;
+    // หลังจากนั้นใช้ Exponential Backoff (เพิ่มทีละ 1.5 เท่า) เพื่อไม่ให้โดนแบน IP
+    delay = Math.min(baseDelay * Math.pow(1.5, botState.reconnectAttempts - 3), maxDelay);
   }
 
-  // ตรวจสอบให้แน่ใจว่า delay ไม่ต่ำกว่า 30 วินาที เพื่อป้องกันการโดนบล็อก IP
-  if (delay < 30000) {
-    delay = 30000;
-  }
-
-  delay = Math.min(delay, maxDelay); // จำกัด delay ไม่ให้เกินค่าสูงสุด
-  const jitter = Math.floor(Math.random() * 5000); // เพิ่มค่าสุ่ม (jitter) สูงสุด 5 วินาที
+  const jitter = Math.floor(Math.random() * 10000); // เพิ่มค่าสุ่ม 0-10 วิ
   return delay + jitter;
 }
 
 function createBot() {
-  // สำรองค่า IP/Port ที่อาจจะถูกอัปเดตมาจาก HTTP/IPC ก่อนที่จะโหลดไฟล์ทับ
-  const dynamicIp = config.server.ip;
-  const dynamicPort = config.server.port;
+  // สำรองค่า IP ปัจจุบันไว้ (กรณีเป็น Numerical IP จาก AternosController)
+  const currentIp = config.server.ip;
+  const currentPort = config.server.port;
 
   try {
-    const freshConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
-    Object.assign(config, freshConfig);
+    if (fs.existsSync(path.join(__dirname, "settings.json"))) {
+      const freshConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
+      Object.assign(config, freshConfig);
 
-    // ถ้ามีค่า IP ที่ถูกส่งมาจาก AternosController (และไม่ใช่ค่า default hostname) ให้ใช้ค่านั้น
-    if (dynamicIp && dynamicIp !== freshConfig.server.ip) {
-      config.server.ip = dynamicIp;
-      config.server.port = dynamicPort;
+      // บน Render หากได้รับ Dynamic IP มาแล้ว ให้ใช้ค่านั้นแทนค่าในไฟล์ settings.json
+      if (currentIp && /^\d{1,3}(\.\d{1,3}){3}$/.test(currentIp)) {
+        config.server.ip = currentIp;
+        config.server.port = currentPort;
+      }
     }
   } catch (e) {
     addLog(`[Config] Failed to reload settings.json: ${e.message}`);
@@ -892,15 +886,10 @@ function createBot() {
       auth: config["bot-account"].type,
       host: config.server.ip,
       port: config.server.port,
-      fakeHost: "AbsoluteSybau.aternos.me", // ช่วยให้ Proxy ของ Aternos จับคู่การเชื่อมต่อได้แม่นยำขึ้น
+      fakeHost: "AbsoluteSybau.aternos.me",
       version: config.server.version,
-      // เพิ่มเวลาเป็น 120 วินาที เพราะ Aternos Proxy มักจะค้างในช่วงแรก
-      connectTimeout: 120000,
-      checkTimeoutInterval: 120000,
-      // ปรับลดเวลา Connect Timeout เหลือ 45 วิ เพื่อให้ตัดการเชื่อมต่อที่ค้างเร็วขึ้นและเริ่มใหม่
-      // เพราะบน Render ถ้าเชื่อมต่อไม่ได้ใน 45 วิ มักจะเป็นเพราะ IP โดนบล็อก
-      connectTimeout: 45000,
-      checkTimeoutInterval: 45000,
+      connectTimeout: 90000, 
+      checkTimeoutInterval: 90000,
       keepAlive: true,
     });
 
