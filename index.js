@@ -1,13 +1,11 @@
 "use strict";
 
 const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, ".env") });
+require("dotenv").config();
 
 const IS_MINECRAFT_WORKER = process.env.BOTMINECRAFT_ROLE === "minecraft";
 
-if (IS_MINECRAFT_WORKER) {
-  console.log(`[System] Worker starting... CWD: ${process.cwd()} DIR: ${__dirname}`);
-}
+const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com";
 
 let { addLog, getLogs } = require("./logger");
 
@@ -219,8 +217,6 @@ function sendToMinecraftWorker(type, payload = {}) {
   addLog(`[Worker] Sent ${type} to Minecraft worker.`);
   return true;
 }
-
-const ATERNOS_SERVICE_URL = process.env.ATERNOS_SERVICE_URL || "http://localhost:5001"
 
 let lastAternosNotification = 0;
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
@@ -1772,6 +1768,8 @@ if (!IS_MINECRAFT_WORKER) {
   );
   addLog("=".repeat(50));
 }
+
+let workerStateInterval = null;
 
 async function main() {
   console.log(`[System] Entering main() as ${IS_MINECRAFT_WORKER ? 'WORKER' : 'MASTER'}`);
