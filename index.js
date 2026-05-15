@@ -6,6 +6,9 @@ require("dotenv").config();
 // Determine if this process is the Minecraft worker or the master
 const IS_MINECRAFT_WORKER = process.env.BOTMINECRAFT_ROLE === "minecraft"; // Must be first to determine role
 
+// นำเข้าระบบ Keep Alive
+const keep_alive = require("./keep_alive.js");
+
 // Global variables for bot state (shared by master and worker processes)
 let botRunning = false; // Master's view of whether bot should be running
 let isConnecting = false; // Master's view of whether bot is connecting
@@ -534,35 +537,9 @@ function formatUptime(ticks) {
   return res.trim();
 }
 
-// ============================================================
-// SELF-PING - Prevent Render from sleeping
-// FIX: only ping if RENDER_EXTERNAL_URL is set (skip useless localhost ping)
-// ============================================================
-const SELF_PING_INTERVAL = 10 * 60 * 1000;
-
-function startSelfPing() {
-  const renderUrl = process.env.RENDER_EXTERNAL_URL;
-  if (!renderUrl) {
-    addLog(
-      "[KeepAlive] No RENDER_EXTERNAL_URL set - self-ping disabled (running locally)",
-    );
-    return;
-  }
-  setInterval(() => {
-    const protocol = renderUrl.startsWith("https") ? https : http;
-    protocol
-      .get(`${renderUrl}/ping`, (res) => {
-        // Silent success
-      })
-      .on("error", (err) => {
-        addLog(`[KeepAlive] Self-ping failed: ${err.message}`);
-      });
-  }, SELF_PING_INTERVAL);
-  addLog("[KeepAlive] Self-ping system started (every 10 min)");
-}
-
+// เรียกใช้งานระบบ Keep Alive เฉพาะใน Master Process
 if (!IS_MINECRAFT_WORKER) {
-  startSelfPing();
+  keep_alive(addLog);
 }
 
 // ============================================================
