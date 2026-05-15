@@ -209,7 +209,8 @@ let minecraftSnapshot = {
   playerNames: [],
   weather: "Unknown",
   worldTime: "Unknown",
-  worldDay: 0
+  worldDay: 0,
+  label: "Unknown"
 };
 
 function sendToMinecraftWorker(type, payload = {}) {
@@ -219,7 +220,6 @@ function sendToMinecraftWorker(type, payload = {}) {
   return true;
 }
 
-// const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com"
 const ATERNOS_SERVICE_URL = process.env.ATERNOS_SERVICE_URL || "http://localhost:5001"
 
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
@@ -308,7 +308,7 @@ function startMinecraftWorker() {
       minecraftWorker = null;
       minecraftSnapshot = {
         bot: null, connected: false, reconnecting: false, coords: null,
-        playerCount: 0, playerNames: [], weather: "Unknown", worldTime: "Unknown", worldDay: 0
+        playerCount: 0, playerNames: [], weather: "Unknown", worldTime: "Unknown", worldDay: 0, label: "Unknown"
       };
       botState.connected = false;
       if (botRunning) {
@@ -345,6 +345,13 @@ function stopMinecraftWorker() {
 app.post("/start", (req, res) => {
   if (botRunning || isConnecting) return res.json({ success: true, msg: "Already in progress" });
 
+  // FIX: Update IP and Port if provided by BotAternos
+  if (req.body.ip && req.body.port) {
+    config.server.ip = req.body.ip;
+    config.server.port = parseInt(req.body.port, 10);
+    addLog(`[Control] Updated server target to ${config.server.ip}:${config.server.port} via start signal.`);
+  }
+
   botRunning = true;
   resetReconnectState();
   botState.connected = false;
@@ -353,7 +360,8 @@ app.post("/start", (req, res) => {
 
   if (USE_SPLIT_MINECRAFT) {
     startMinecraftWorker();
-    setTimeout(() => sendToMinecraftWorker("start"), 1000);
+    // Pass IP/Port to worker if provided
+    setTimeout(() => sendToMinecraftWorker("start", { ip: req.body.ip, port: req.body.port }), 1000);
   } else {
     createBot();
   }
@@ -609,7 +617,8 @@ function publishMinecraftState() {
         weather: weather,
         dimension: dimension,
         worldTime: timeStr,
-        worldDay: (bot && bot.time) ? bot.time.day : 0
+        worldDay: (bot && bot.time) ? bot.time.day : 0,
+        label: minecraftSnapshot.label // Master updates this via IPC or HTTP signal
       },
     });
   } catch (err) {
@@ -633,6 +642,13 @@ if (IS_MINECRAFT_WORKER && process.send) {
     if (message.type === "start") {
       if (botRunning) return;
       addLog("[Worker] Start signal received.");
+      
+      // Update IP/Port if provided in IPC message
+      if (payload.ip && payload.port) {
+         config.server.ip = payload.ip;
+         config.server.port = parseInt(payload.port, 10);
+      }
+
       botRunning = true;
       resetReconnectState();
       createBot();
@@ -762,11 +778,23 @@ function getReconnectDelay() {
     return throttleDelay;
   }
 
+  // FIX: Smarter delay based on Aternos status if known
+  // If we know the server is starting, wait longer (30s)
+  if (USE_SPLIT_MINECRAFT && minecraftSnapshot && (minecraftSnapshot.label || "").toLowerCase().includes("starting")) {
+    return 30000 + Math.floor(Math.random() * 5000);
+  }
+
   // FIX: read auto-reconnect-delay from settings as base delay
   const baseDelay = config.utils["auto-reconnect-delay"] || 3000;
   const maxDelay = config.utils["max-reconnect-delay"] || 30000;
+
+  // If online but failing, use 10s for first few attempts to catch it quickly when ready
+  if (botState.reconnectAttempts < 3) {
+     return 10000 + Math.floor(Math.random() * 2000);
+  }
+
   const delay = Math.min(
-    baseDelay * Math.pow(2, botState.reconnectAttempts),
+    baseDelay * Math.pow(2, botState.reconnectAttempts - 3),
     maxDelay,
   );
   const jitter = Math.floor(Math.random() * 2000);
@@ -929,7 +957,18 @@ function createBot() {
     // so that 'end' is the single source of reconnect truth, preventing double-trigger.
     bot.on("kicked", (reason) => {
       isConnecting = false;
-      const kickReason = typeof reason === "object" ? JSON.stringify(reason) : String(reason);
+      let kickReason = typeof reason === "object" ? JSON.stringify(reason) : String(reason);
+      
+      // FIX: Better JSON kick message parsing
+      try {
+         const parsed = JSON.parse(kickReason);
+         if (parsed.text === "" && parsed.extra) {
+            kickReason = parsed.extra.map(e => e.text).join("");
+         } else if (parsed.text) {
+            kickReason = parsed.text;
+         }
+      } catch(e) {}
+
       addLog(`[Bot] Kicked: ${kickReason}`);
       
       // FIX: If duplicate login, wait longer to let the server clear the old session
@@ -952,7 +991,8 @@ function createBot() {
         reasonStr.includes("version") ||
         reasonStr.includes("incompatible") ||
         reasonStr.includes("outdated") ||
-        reasonStr.includes("unsupported")
+        reasonStr.includes("unsupported") ||
+        reasonStr.includes("whitelist")
       ) {
         forceAutoDetectVersion = true;
         addLog("[Bot] Version mismatch suspected - auto-detect fallback armed.");
