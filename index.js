@@ -343,34 +343,29 @@ function stopMinecraftWorker() {
 }
 
 app.post("/start", (req, res) => {
-  // FIX: Always update IP and Port if provided, even if bot is already running
+  // FIX: Always update IP and Port if provided, even if bot is already running or connecting
   if (req.body.ip && req.body.port) {
     const oldTarget = `${config.server.ip}:${config.server.port}`;
     const newTarget = `${req.body.ip}:${req.body.port}`;
     
     if (oldTarget !== newTarget) {
+      addLog(`[Control] Server target changed: ${oldTarget} -> ${newTarget}. Resetting bot...`);
+      
+      // Force cleanup of current connection/bot
+      if (USE_SPLIT_MINECRAFT) {
+        stopMinecraftWorker();
+      } else {
+        disconnectCurrentBot("port-change");
+      }
+      
+      // Update config
       config.server.ip = req.body.ip;
       config.server.port = parseInt(req.body.port, 10);
-      addLog(`[Control] Server target changed: ${oldTarget} -> ${newTarget}`);
       
-      // If we are currently in a reconnection delay, reset it to try the new port immediately
-      if (isReconnecting && reconnectTimeoutId) {
-        addLog("[Control] Resetting reconnection timer for new port...");
-        clearTimeout(reconnectTimeoutId);
-        reconnectTimeoutId = null;
-        isReconnecting = false;
-        // The logic below will handle starting the bot
-      }
-      
-      // If bot is "running" but not connected, force a new attempt now
-      if (botRunning && !botState.connected && !isConnecting) {
-        addLog("[Control] Forcing immediate connection attempt to new port...");
-        if (USE_SPLIT_MINECRAFT) {
-          sendToMinecraftWorker("start", { ip: req.body.ip, port: req.body.port });
-        } else {
-          createBot();
-        }
-      }
+      // Reset flags to allow immediate restart
+      botRunning = false; 
+      isConnecting = false;
+      isReconnecting = false;
     }
   }
 
