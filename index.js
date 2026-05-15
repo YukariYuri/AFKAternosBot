@@ -369,7 +369,10 @@ app.post("/start", (req, res) => {
     }
   }
 
-  if (botRunning || isConnecting) return res.json({ success: true, msg: "Already in progress" });
+  if (botRunning || isConnecting) {
+    // ไม่ต้องส่ง Log ซ้ำถ้ากำลังเชื่อมต่ออยู่แล้ว
+    return res.json({ success: true, msg: "Already in progress" });
+  }
 
   botRunning = true;
   resetReconnectState();
@@ -870,9 +873,9 @@ function createBot() {
       host: config.server.ip,
       port: config.server.port,
       version: config.server.version,
-      // FIX: handle slow Aternos startup and laggy connection
-      connectTimeout: 60000,
-      checkTimeoutInterval: 60000,
+      // เพิ่มเวลาการรอเชื่อมต่อเป็น 90 วินาทีสำหรับ Proxy ของ Aternos ที่ช้า
+      connectTimeout: 90000,
+      checkTimeoutInterval: 90000,
       keepAlive: true,
     });
 
