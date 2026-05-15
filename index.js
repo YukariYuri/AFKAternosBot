@@ -812,7 +812,7 @@ function getReconnectDelay() {
 
   // If online but failing, use 10s for first few attempts to catch it quickly when ready
   if (botState.reconnectAttempts < 3) {
-    return 30000 + Math.floor(Math.random() * 5000); // เพิ่มเป็น 30 วินาทีในช่วง 3 ครั้งแรก
+    return 45000 + Math.floor(Math.random() * 5000); // เพิ่มเป็น 45 วินาทีเพื่อให้ Proxy ของ Aternos พร้อมจริงๆ
   }
 
   const delay = Math.min(
@@ -824,11 +824,19 @@ function getReconnectDelay() {
 }
 
 function createBot() {
-  // FIX: Reload config from disk before every connection to get updated port/IP
+  // สำรองค่า IP/Port ที่อาจจะถูกอัปเดตมาจาก HTTP/IPC ก่อนที่จะโหลดไฟล์ทับ
+  const dynamicIp = config.server.ip;
+  const dynamicPort = config.server.port;
+
   try {
     const freshConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
-    // Update the existing config object without replacing it to keep references
     Object.assign(config, freshConfig);
+
+    // ถ้ามีค่า IP ที่ถูกส่งมาจาก AternosController (และไม่ใช่ค่า default hostname) ให้ใช้ค่านั้น
+    if (dynamicIp && dynamicIp !== freshConfig.server.ip) {
+      config.server.ip = dynamicIp;
+      config.server.port = dynamicPort;
+    }
   } catch (e) {
     addLog(`[Config] Failed to reload settings.json: ${e.message}`);
   }
@@ -872,6 +880,7 @@ function createBot() {
       auth: config["bot-account"].type,
       host: config.server.ip,
       port: config.server.port,
+      fakeHost: "AbsoluteSybau.aternos.me", // ช่วยให้ Proxy ของ Aternos จับคู่การเชื่อมต่อได้แม่นยำขึ้น
       version: config.server.version,
       // เพิ่มเวลาเป็น 120 วินาที เพราะ Aternos Proxy มักจะค้างในช่วงแรก
       connectTimeout: 120000,
