@@ -222,7 +222,11 @@ function sendToMinecraftWorker(type, payload = {}) {
 
 const ATERNOS_SERVICE_URL = process.env.ATERNOS_SERVICE_URL || "http://localhost:5001"
 
+let lastAternosNotification = 0;
 async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
+  const now = Date.now();
+  if (now - lastAternosNotification < 180000) return; // อย่าส่งแจ้งเตือนรัวเกินไป (3 นาที) ป้องกัน 503
+  lastAternosNotification = now;
   try {
     const protocol = ATERNOS_SERVICE_URL.startsWith("https") ? require("https") : require("http");
     const data = JSON.stringify({ reason });
@@ -807,19 +811,27 @@ function getReconnectDelay() {
   }
 
   // FIX: read auto-reconnect-delay from settings as base delay
-  const baseDelay = config.utils["auto-reconnect-delay"] || 3000;
-  const maxDelay = config.utils["max-reconnect-delay"] || 30000;
+  const baseDelay = config.utils["auto-reconnect-delay"] || 5000; // Default 5s
+  const maxDelay = config.utils["max-reconnect-delay"] || 60000; // Default 60s
 
-  // If online but failing, use 10s for first few attempts to catch it quickly when ready
-  if (botState.reconnectAttempts < 3) {
-    return 45000 + Math.floor(Math.random() * 5000); // เพิ่มเป็น 45 วินาทีเพื่อให้ Proxy ของ Aternos พร้อมจริงๆ
+  let delay;
+  const minInitialDelay = 45000; // Minimum delay for first few attempts on Render
+
+  if (botState.reconnectAttempts <= 3) { // สำหรับการเชื่อมต่อครั้งที่ 1, 2, 3
+    delay = minInitialDelay + Math.floor(Math.random() * 5000);
+  } else {
+    // ใช้ Exponential backoff สำหรับการเชื่อมต่อครั้งถัดไป (เริ่มจากครั้งที่ 4)
+    const attemptFactor = Math.pow(2, botState.reconnectAttempts - 3);
+    delay = baseDelay * attemptFactor;
   }
 
-  const delay = Math.min(
-    baseDelay * Math.pow(2, botState.reconnectAttempts - 3),
-    maxDelay,
-  );
-  const jitter = Math.floor(Math.random() * 2000);
+  // ตรวจสอบให้แน่ใจว่า delay ไม่ต่ำกว่า 30 วินาที เพื่อป้องกันการโดนบล็อก IP
+  if (delay < 30000) {
+    delay = 30000;
+  }
+
+  delay = Math.min(delay, maxDelay); // จำกัด delay ไม่ให้เกินค่าสูงสุด
+  const jitter = Math.floor(Math.random() * 5000); // เพิ่มค่าสุ่ม (jitter) สูงสุด 5 วินาที
   return delay + jitter;
 }
 
@@ -885,6 +897,10 @@ function createBot() {
       // เพิ่มเวลาเป็น 120 วินาที เพราะ Aternos Proxy มักจะค้างในช่วงแรก
       connectTimeout: 120000,
       checkTimeoutInterval: 120000,
+      // ปรับลดเวลา Connect Timeout เหลือ 45 วิ เพื่อให้ตัดการเชื่อมต่อที่ค้างเร็วขึ้นและเริ่มใหม่
+      // เพราะบน Render ถ้าเชื่อมต่อไม่ได้ใน 45 วิ มักจะเป็นเพราะ IP โดนบล็อก
+      connectTimeout: 45000,
+      checkTimeoutInterval: 45000,
       keepAlive: true,
     });
 
@@ -910,7 +926,7 @@ function createBot() {
         notifyAternosToStart("connection-timeout");
         scheduleReconnect();
       }
-    }, 300000);
+    }, 180000 + 10000); // 3 นาที + 10 วินาที buffer
 
     // FIX: guard against spawn firing twice (can happen on some servers)
     let spawnHandled = false;
