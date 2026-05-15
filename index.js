@@ -3,9 +3,20 @@
 const path = require("path");
 require("dotenv").config();
 
-const IS_MINECRAFT_WORKER = process.env.BOTMINECRAFT_ROLE === "minecraft";
+// Determine if this process is the Minecraft worker or the master
+const IS_MINECRAFT_WORKER = process.env.BOTMINECRAFT_ROLE === "minecraft"; // Must be first to determine role
 
-const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com";
+// Global variables for bot state (shared by master and worker processes)
+let botRunning = false; // Master's view of whether bot should be running
+let isConnecting = false; // Master's view of whether bot is connecting
+let bot = null; // Mineflayer bot instance (only initialized in worker or non-split master)
+let activeIntervals = []; // For bot's internal intervals
+let reconnectTimeoutId = null; // For bot's reconnect timer
+let connectionTimeoutId = null; // For bot's initial connection timeout
+let isReconnecting = false; // For bot's reconnect state
+let forceAutoDetectVersion = false; // For bot's version fallback
+
+const ATERNOS_SERVICE_URL = "https://aternosbot-8zes.onrender.com"; // URL for Aternos Bot service
 
 let { addLog, getLogs } = require("./logger");
 
@@ -48,9 +59,6 @@ if (IS_MINECRAFT_WORKER && process.send) {
   };
 }
 
-const mineflayer = require("mineflayer");
-const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
-const { GoalBlock } = goals;
 const config = require("./settings.json");
 const express = require("express");
 const http = require("http");
@@ -58,7 +66,7 @@ const https = require("https");
 const fs = require("fs");
 const { fork } = require("child_process");
 
-const USE_SPLIT_MINECRAFT = !IS_MINECRAFT_WORKER && process.env.BOTMINECRAFT_SPLIT !== "false";
+const USE_SPLIT_MINECRAFT = !IS_MINECRAFT_WORKER && process.env.BOTMINECRAFT_SPLIT !== "false"; // Master's decision
 
 // ============================================================
 // EXPRESS SERVER - Keep Render alive
@@ -195,8 +203,6 @@ app.get("/health", (req, res) => {
 app.get("/ping", (req, res) => res.send("pong"));
 
 
-let botRunning = false;
-let isConnecting = false;
 let minecraftWorker = null;
 let minecraftSnapshot = {
   bot: null,
@@ -593,18 +599,13 @@ setInterval(
   60 * 1000, // Check every minute
 );
 // ============================================================
-// BOT CREATION WITH RECONNECTION LOGIC
 // ============================================================
+// BOT CORE LOGIC (shared by master in non-split mode, and worker)
 // ============================================================
-// RECONNECTION & TIMEOUT MANAGEMENT
-// ============================================================
-let bot = null;
-let activeIntervals = [];
-let reconnectTimeoutId = null;
-let connectionTimeoutId = null;
-let isReconnecting = false;
-let forceAutoDetectVersion = false;
 
+// These functions are defined globally so they can be used by both master (in non-split mode)
+// and by the worker process. Each process will have its own copy of the global variables
+// like `bot`, `isConnecting`, `botRunning`, etc.
 function clearBotTimeouts() {
   if (reconnectTimeoutId) {
     clearTimeout(reconnectTimeoutId);
@@ -615,6 +616,11 @@ function clearBotTimeouts() {
     connectionTimeoutId = null;
   }
 }
+
+// Conditional imports for worker process
+const mineflayer = IS_MINECRAFT_WORKER ? require("mineflayer") : null;
+const { Movements, pathfinder, goals } = IS_MINECRAFT_WORKER ? require("mineflayer-pathfinder") : { Movements: null, pathfinder: null, goals: { GoalBlock: null } };
+const { GoalBlock } = goals || {};
 
 function resetReconnectState() {
   clearBotTimeouts();
@@ -1769,8 +1775,6 @@ if (!IS_MINECRAFT_WORKER) {
   addLog("=".repeat(50));
 }
 
-let workerStateInterval = null;
-
 async function main() {
   console.log(`[System] Entering main() as ${IS_MINECRAFT_WORKER ? 'WORKER' : 'MASTER'}`);
 
@@ -1783,7 +1787,7 @@ async function main() {
   if (USE_SPLIT_MINECRAFT) {
     addLog("[System] Starting worker process...");
     startMinecraftWorker();
-    botRunning = true;
+    botRunning = true; // Master's botRunning state
     // No more hardcoded 5s delay here, master waits for "ready" message
   } else {
     botRunning = true;
