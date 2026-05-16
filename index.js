@@ -1,10 +1,9 @@
 "use strict";
 
 const path = require("path");
-require("dotenv").config();
 
-// Determine if this process is the Minecraft worker or the master
-const IS_MINECRAFT_WORKER = process.env.BOTMINECRAFT_ROLE === "minecraft"; // Must be first to determine role
+const IS_MINECRAFT_WORKER = !!process.send; // Worker processes have an IPC channel
+const USE_SPLIT_MINECRAFT = !IS_MINECRAFT_WORKER && process.env.BOTMINECRAFT_SPLIT !== "false";
 
 let bot = null; // Mineflayer bot instance (only initialized in worker or non-split master)
 let activeIntervals = []; // For bot's internal intervals
@@ -23,7 +22,7 @@ let { addLog, getLogs } = require("./logger");
 
 // FIX: Prevent worker from logging locally to console.
 // Worker logs will only be printed by the master process to avoid visual duplication.
-if (IS_MINECRAFT_WORKER && process.send) {
+if (IS_MINECRAFT_WORKER) {
   // Global error handler for worker
   process.on("uncaughtException", (err) => {
     const msg = String(err.message || err);
@@ -61,20 +60,30 @@ if (IS_MINECRAFT_WORKER && process.send) {
 }
 
 const config = require("./settings.json");
+const _server = config.server;
+const _name = config.name;
+const utils = config.utils;
+const discord = config.discord;
+const position = config.position;
+const movement = config.movement;
+const combat = config.combat;
+const modules = config.modules;
+const beds = config.beds;
+const chat = config.chat;
+const { existsSync, readFileSync } = require("fs");
+const { join } = require("path");
 const express = require("express");
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const { fork } = require("child_process");
 
-const USE_SPLIT_MINECRAFT = !IS_MINECRAFT_WORKER && process.env.BOTMINECRAFT_SPLIT !== "false"; // Master's decision
-
 // ============================================================
 // EXPRESS SERVER - Keep Render alive
 // ============================================================
 const app = express();
 app.use(express.json());
-const PORT = process.env.PORT || 6575;
+const PORT = 6575;
 
 // Stats tracking (Persistent)
 let stats = { totalPlaytime: 0 };
@@ -121,6 +130,8 @@ let botState = {
   wasThrottled: false,
 };
 
+const playerDimensions = {};
+
 // Sample memory every 10 seconds for average and force GC if possible
 setInterval(() => {
   if (global.gc) {
@@ -153,7 +164,7 @@ process.on("SIGTERM", () => {
 
 // Load HTML templates once at startup
 const templates = {};
-const templateFiles = ["dashboard.html", "tutorial.html", "logs.html"];
+const templateFiles = ["dashboard.html", "logs.html"];
 
 templateFiles.forEach(f => {
   try {
@@ -194,6 +205,7 @@ app.get("/health", (req, res) => {
     // Enhanced World Data
     playerCount: state.playerCount || 0,
     playerNames: state.playerNames || [],
+    playerData: state.playerData || [],        // ← เพิ่ม
     weather: state.weather || "Unknown",
     dimension: state.dimension || "overworld",
     worldTime: state.worldTime || "Unknown",
@@ -211,6 +223,7 @@ let minecraftSnapshot = {
   coords: null,
   playerCount: 0,
   playerNames: [],
+  playerData: [],
   weather: "Unknown",
   worldTime: "Unknown",
   worldDay: 0,
@@ -229,7 +242,7 @@ async function notifyAternosToStart(reason = "minecraft-bot-trigger") {
   if (now - lastAternosNotification < 180000) return; // อย่าส่งแจ้งเตือนรัวเกินไป (3 นาที) ป้องกัน 503
   lastAternosNotification = now;
   try {
-    const protocol = ATERNOS_SERVICE_URL.startsWith("https") ? require("https") : require("http");
+    const protocol = ATERNOS_SERVICE_URL.startsWith("https") ? https : http;
     const data = JSON.stringify({ reason });
     const url = new URL(`${ATERNOS_SERVICE_URL}/aternos/start`);
 
@@ -309,6 +322,8 @@ function startMinecraftWorker() {
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
 
+    minecraftWorker.stderr && minecraftWorker.stderr.on("data", (d) => addLog(`[Worker STDERR] ${d}`));
+
     minecraftWorker.on("message", (message) => {
       if (!message || typeof message !== "object") return;
 
@@ -320,10 +335,21 @@ function startMinecraftWorker() {
       }
 
       if (message.type === "state") {
-        // MASTER IPC: Update historical stats using session ticks from worker
-        if (typeof message.payload.sessionTicks === 'number' && message.payload.connected) {
-          stats.totalPlaytime = Number(stats.totalPlaytime || 0) + message.payload.sessionTicks;
-          if (stats.totalPlaytime % 100 === 0) saveStats();
+        // MASTER IPC: Track playtime using real time (ms) not cumulative ticks
+        if (message.payload.connected) {
+          const now = Date.now();
+          if (!botState._playtimeLastTick) {
+            botState._playtimeLastTick = now;
+          } else {
+            const delta = now - botState._playtimeLastTick;
+            if (delta > 0 && delta < 30000) { // ไม่เกิน 30s กัน gap ผิดปกติ
+              stats.totalPlaytime = Number(stats.totalPlaytime || 0) + delta;
+              saveStats();
+            }
+            botState._playtimeLastTick = now;
+          }
+        } else {
+          botState._playtimeLastTick = null; // reset เมื่อ disconnect
         }
 
         minecraftSnapshot = {
@@ -344,10 +370,11 @@ function startMinecraftWorker() {
 
     minecraftWorker.on("exit", (code, signal) => {
       addLog(`[MinecraftWorker] exited code=${code ?? "null"} signal=${signal ?? "null"}`);
+      addLog(`[MinecraftWorker] Exit reason: code=${code}, signal=${signal}. Check stderr above.`);
       minecraftWorker = null;
       minecraftSnapshot = {
         bot: null, connected: false, reconnecting: false, coords: null,
-        playerCount: 0, playerNames: [], weather: "Unknown", worldTime: "Unknown", worldDay: 0, label: "Unknown"
+       playerCount: 0, playerNames: [], playerData: [], weather: "Unknown", worldTime: "Unknown", worldDay: 0, label: "Unknown"
       };
       botState.connected = false;
       if (botRunning) {
@@ -398,8 +425,8 @@ app.post("/start", (req, res) => {
       }
 
       // Update config
-      config.server.ip = req.body.ip;
-      config.server.port = parseInt(req.body.port, 10);
+      _server.ip = req.body.ip;
+      _server.port = parseInt(req.body.port, 10);
 
       // Reset flags to allow immediate restart
       botRunning = false;
@@ -533,7 +560,7 @@ app.post("/command", express.json(), (req, res) => {
 // FIX: handle port conflict gracefully - try next port if taken
 if (!IS_MINECRAFT_WORKER) {
   const server = app.listen(PORT, "0.0.0.0", () => {
-    addLog(`[Server] HTTP server started on port ${server.address().port} `);
+    addLog(`[Server] HTTP server started on port http://localhost:${server.address().port} `);
   });
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
@@ -710,8 +737,8 @@ function getReconnectDelay(forceOfflineWait) {
   }
 
   // ปรับจังหวะการเชื่อมต่อใหม่ให้เสถียรสำหรับเครือข่าย Render
-  const baseDelay = config.utils["auto-reconnect-delay"] || 15000;
-  const maxDelay = config.utils["max-reconnect-delay"] || 45000;
+  const baseDelay = utils["auto-reconnect-delay"] || 15000;
+  const maxDelay = utils["max-reconnect-delay"] || 45000;
 
   let delay;
   if (botState.reconnectAttempts <= 3) {
@@ -728,18 +755,18 @@ function getReconnectDelay(forceOfflineWait) {
 
 async function createBot() {
   // สำรองค่า IP ปัจจุบันไว้ (กรณีเป็น Numerical IP จาก AternosController)
-  const currentIp = config.server.ip;
-  const currentPort = config.server.port;
+  const currentIp = _server.ip;
+  const currentPort = _server.port;
 
   try {
-    if (fs.existsSync(path.join(__dirname, "settings.json"))) {
-      const freshConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
+    if (existsSync(join(__dirname, "settings.json"))) {
+      const freshConfig = JSON.parse(readFileSync(join(__dirname, "settings.json"), "utf8"));
       Object.assign(config, freshConfig);
 
       // บน Render หากได้รับ Dynamic IP มาแล้ว ให้ใช้ค่านั้นแทนค่าในไฟล์ settings.json
       if (currentIp && /^\d{1,3}(\.\d{1,3}){3}$/.test(currentIp)) {
-        config.server.ip = currentIp;
-        config.server.port = currentPort;
+        _server.ip = currentIp;
+        _server.port = currentPort;
       }
     }
   } catch (e) {
@@ -776,19 +803,16 @@ async function createBot() {
   }
 
   addLog(`[Bot] Creating bot instance...`);
-  addLog(`[Bot] Connecting to ${config.server.ip}:${config.server.port}`);
+  addLog(`[Bot] Connecting to ${_server.ip}:${_server.port}`);
 
   try {
     bot = mineflayer.createBot({
       username: config["bot-account"].username,
       password: config["bot-account"].password || undefined,
       auth: config["bot-account"].type,
-      host: config.server.ip,
-      port: config.server.port,
-      fakeHost: "AbsoluteSybau.aternos.me",
-      version: config.server.version,
-      connectTimeout: 6000, 
-      checkTimeoutInterval: 6000,
+      host: _server.ip,
+      port: _server.port,
+      version: _server.version,
       keepAlive: true,
     });
 
@@ -803,7 +827,39 @@ async function createBot() {
       bot._client.on("packet", () => {
         botState.lastPacket = Date.now();
       });
+
+      // Track dimension จาก player_info packet (Tab List)
+      bot._client.on("player_info", (packet) => {
+        try {
+          if (!packet.data) return;
+          for (const entry of packet.data) {
+            if (!entry.player?.name) continue;
+            const name = entry.player.name;
+            // displayName ของ PaperMC มักเป็น "Nether | PlayerName" หรือ "Overworld | PlayerName"
+            const displayName = entry.player?.displayName
+              ? JSON.stringify(entry.player.displayName)
+              : "";
+            const dimMatch = displayName.match(/(Nether|Overworld|The End|End)/i);
+            if (dimMatch) {
+              const raw = dimMatch[1].toLowerCase();
+              playerDimensions[name] = raw === "the end" || raw === "end" ? "end"
+                : raw === "nether" ? "nether"
+                : "overworld";
+            }
+          }
+          publishMinecraftState();
+        } catch (e) {}
+      });
     }
+
+    // อัพเดท dashboard ทันทีเมื่อมีคนเข้าออก
+    bot.on("playerJoined", (player) => {
+      publishMinecraftState();
+    });
+    bot.on("playerLeft", (player) => {
+      delete playerDimensions[player.username];
+      publishMinecraftState();
+    });
 
     // FIX: connection timeout - increased to 300s for slow Aternos startup
     clearBotTimeouts();
@@ -838,6 +894,7 @@ async function createBot() {
       botState.connected = true;
       botState.lastActivity = Date.now();
       botState.lastPacket = Date.now();
+      botState.spawnAge = bot?.time?.age ?? 0;
       botState.reconnectAttempts = 0;
       isReconnecting = false;
       isConnecting = false;
@@ -846,12 +903,12 @@ async function createBot() {
         `[Bot] [+] Successfully spawned on server! (Version: ${bot.version})`,
       );
       if (
-        config.discord &&
-        config.discord.events &&
-        config.discord.events.connect
+        discord &&
+        discord.events &&
+        discord.events.connect
       ) {
         sendDiscordWebhook(
-          `[+] **Connected** to \`${config.server.ip}\``,
+          `[+] **Connected** to \`${_server.ip}\``,
           0x4ade80,
         );
       }
@@ -870,18 +927,28 @@ async function createBot() {
 
       // Attempt creative mode (only works if bot has OP and enabled in settings)
       setTimeout(() => {
-        if (bot && botState.connected && config.server["try-creative"]) {
+        if (bot && botState.connected && _server["try-creative"]) {
           bot.chat("/gamemode creative");
           addLog("[INFO] Attempted to set creative mode (requires OP)");
         }
       }, 3000);
 
-      bot.on("messagestr", (message) => {
-        if (
-          message.includes("commands.gamemode.success.self") ||
-          message.includes("Set own game mode to Creative Mode")
-        ) {
-          addLog("[INFO] Bot is now in Creative Mode.");
+      bot.on("message", (jsonMsg) => {
+        const msg = jsonMsg.toString();
+        // Match: "Nether | PlayerName joined the game" หรือ "Overworld | PlayerName joined the game"
+        const joinMatch = msg.match(/^(Nether|Overworld|The End)\s*\|\s*(\S+)\s+joined the game/i);
+        if (joinMatch) {
+          const dim = joinMatch[1].toLowerCase().replace("the end", "end");
+          const name = joinMatch[2];
+          playerDimensions[name] = dim;
+          addLog(`[DimTrack] ${name} is in ${dim}`);
+        }
+        // Track dimension change: "Nether | PlayerName" (บางเซิร์ฟเวอร์ส่งตอนเปลี่ยน dim)
+        const dimChange = msg.match(/^(Nether|Overworld|The End)\s*\|\s*(\S+)/i);
+        if (dimChange && !joinMatch) {
+          const dim = dimChange[1].toLowerCase().replace("the end", "end");
+          const name = dimChange[2];
+          playerDimensions[name] = dim;
         }
       });
 
@@ -944,9 +1011,9 @@ async function createBot() {
       }
 
       if (
-        config.discord &&
-        config.discord.events &&
-        config.discord.events.disconnect
+        discord &&
+        discord.events &&
+        discord.events.disconnect
       ) {
         sendDiscordWebhook(`[!] **Kicked**: ${kickReason}`, 0xff0000);
       }
@@ -962,9 +1029,9 @@ async function createBot() {
       spawnHandled = false; // reset for next connection
 
       if (
-        config.discord &&
-        config.discord.events &&
-        config.discord.events.disconnect
+        discord &&
+        discord.events &&
+        discord.events.disconnect
       ) {
         sendDiscordWebhook(
           `[-] **Disconnected**: ${reason || "Unknown"}`,
@@ -1015,7 +1082,7 @@ function scheduleReconnect(overrideDelay) {
   clearBotTimeouts();
   isConnecting = false; // Reset lock to allow fresh start
 
-  if (!botRunning || !config.utils["auto-reconnect"]) {
+  if (!botRunning || !utils["auto-reconnect"]) {
     isReconnecting = false;
     addLog("[Bot] Auto-reconnect disabled or bot stopped, not reconnecting.");
     return;
@@ -1074,8 +1141,8 @@ function initializeModules(bot, mcData, defaultMove) {
   addLog("[Modules] Initializing all modules...");
 
   // ---------- AUTO AUTH (REACTIVE) ----------
-  if (config.utils["auto-auth"] && config.utils["auto-auth"].enabled) {
-    const password = config.utils["auto-auth"].password;
+  if (utils["auto-auth"] && utils["auto-auth"].enabled) {
+    const password = utils["auto-auth"].password;
     let authHandled = false;
 
     const tryAuth = (type) => {
@@ -1121,9 +1188,9 @@ function initializeModules(bot, mcData, defaultMove) {
   }
 
   // ---------- CHAT MESSAGES ----------
-  if (config.utils["chat-messages"] && config.utils["chat-messages"].enabled) {
-    const messages = config.utils["chat-messages"].messages;
-    if (config.utils["chat-messages"].repeat) {
+  if (utils["chat-messages"] && utils["chat-messages"].enabled) {
+    const messages = utils["chat-messages"].messages;
+    if (utils["chat-messages"].repeat) {
       let i = 0;
       addInterval(() => {
         if (bot && botState.connected) {
@@ -1131,7 +1198,7 @@ function initializeModules(bot, mcData, defaultMove) {
           botState.lastActivity = Date.now();
           i = (i + 1) % messages.length;
         }
-      }, config.utils["chat-messages"]["repeat-delay"] * 1000);
+      }, utils["chat-messages"]["repeat-delay"] * 1000);
     } else {
       messages.forEach((msg, idx) => {
         setTimeout(() => {
@@ -1144,23 +1211,23 @@ function initializeModules(bot, mcData, defaultMove) {
   // ---------- MOVE TO POSITION ----------
   // FIX: only use position goal if circle-walk is NOT enabled (they fight over pathfinder)
   if (
-    config.position &&
-    config.position.enabled &&
+    position &&
+    position.enabled &&
     !(
-      config.movement &&
-      config.movement["circle-walk"] &&
-      config.movement["circle-walk"].enabled
+      movement &&
+      movement["circle-walk"] &&
+      movement["circle-walk"].enabled
     )
   ) {
     bot.pathfinder.setMovements(defaultMove);
     bot.pathfinder.setGoal(
-      new GoalBlock(config.position.x, config.position.y, config.position.z),
+      new GoalBlock(position.x, position.y, position.z),
     );
     addLog("[Position] Navigating to configured position...");
   }
 
   // ---------- ANTI-AFK ----------
-  if (config.utils["anti-afk"] && config.utils["anti-afk"].enabled) {
+  if (utils["anti-afk"] && utils["anti-afk"].enabled) {
     // Arm swinging
     addInterval(
       () => {
@@ -1217,9 +1284,9 @@ function initializeModules(bot, mcData, defaultMove) {
     // FIX: micro-walk only when circle-walk is NOT running, to avoid interrupting pathfinder
     if (
       !(
-        config.movement &&
-        config.movement["circle-walk"] &&
-        config.movement["circle-walk"].enabled
+        movement &&
+        movement["circle-walk"] &&
+        movement["circle-walk"].enabled
       )
     ) {
       addInterval(
@@ -1250,7 +1317,7 @@ function initializeModules(bot, mcData, defaultMove) {
       );
     }
 
-    if (config.utils["anti-afk"].sneak) {
+    if (utils["anti-afk"].sneak) {
       try {
         if (typeof bot.setControlState === "function")
           bot.setControlState("sneak", true);
@@ -1260,28 +1327,28 @@ function initializeModules(bot, mcData, defaultMove) {
 
   // ---------- MOVEMENT MODULES ----------
   // FIX: check top-level movement.enabled flag
-  if (config.movement && config.movement.enabled !== false) {
+  if (movement && movement.enabled !== false) {
     // FIX: circle-walk and random-jump both jump - only run one jumping mechanism
     // random-jump is skipped if anti-afk jump is handled elsewhere; we only use random-jump here
     if (
-      config.movement["circle-walk"] &&
-      config.movement["circle-walk"].enabled
+      movement["circle-walk"] &&
+      movement["circle-walk"].enabled
     ) {
       startCircleWalk(bot, defaultMove);
     }
     // FIX: only run random-jump if circle-walk is NOT running (circle-walk also keeps bot moving)
     if (
-      config.movement["random-jump"] &&
-      config.movement["random-jump"].enabled &&
+      movement["random-jump"] &&
+      movement["random-jump"].enabled &&
       !(
-        config.movement["circle-walk"] && config.movement["circle-walk"].enabled
+        movement["circle-walk"] && movement["circle-walk"].enabled
       )
     ) {
       startRandomJump(bot);
     }
     if (
-      config.movement["look-around"] &&
-      config.movement["look-around"].enabled
+      movement["look-around"] &&
+      movement["look-around"].enabled
     ) {
       startLookAround(bot);
     }
@@ -1289,16 +1356,16 @@ function initializeModules(bot, mcData, defaultMove) {
 
   // ---------- CUSTOM MODULES ----------
   // FIX: avoidMobs AND combatModule conflict - if combat is enabled, don't run avoidMobs at the same time
-  if (config.modules.avoidMobs && !config.modules.combat) {
+  if (modules.avoidMobs && !modules.combat) {
     avoidMobs(bot);
   }
-  if (config.modules.combat) {
+  if (modules.combat) {
     combatModule(bot, mcData);
   }
-  if (config.modules.beds) {
+  if (modules.beds) {
     bedModule(bot, mcData);
   }
-  if (config.modules.chat) {
+  if (modules.chat) {
     chatModule(bot);
   }
 
@@ -1309,7 +1376,7 @@ function initializeModules(bot, mcData, defaultMove) {
 // MOVEMENT HELPERS
 // ============================================================
 function startCircleWalk(bot, defaultMove) {
-  const radius = config.movement["circle-walk"].radius;
+  const radius = movement["circle-walk"].radius;
   let angle = 0;
   let lastPathTime = 0;
 
@@ -1334,7 +1401,7 @@ function startCircleWalk(bot, defaultMove) {
     } catch (e) {
       addLog("[CircleWalk] Error:", e.message);
     }
-  }, config.movement["circle-walk"].speed);
+  }, movement["circle-walk"].speed);
 }
 
 function startRandomJump(bot) {
@@ -1355,7 +1422,7 @@ function startRandomJump(bot) {
     } catch (e) {
       addLog("[RandomJump] Error:", e.message);
     }
-  }, config.movement["random-jump"].interval);
+  }, movement["random-jump"].interval);
 }
 
 function startLookAround(bot) {
@@ -1369,7 +1436,7 @@ function startLookAround(bot) {
     } catch (e) {
       addLog("[LookAround] Error:", e.message);
     }
-  }, config.movement["look-around"].interval);
+  }, movement["look-around"].interval);
 }
 
 // ============================================================
@@ -1423,7 +1490,7 @@ function combatModule(bot, mcData) {
   // FIX: use physicsTick (not the deprecated physicTick)
   bot.on("physicsTick", () => {
     if (!bot || !botState.connected) return;
-    if (!config.combat["attack-mobs"]) return;
+    if (!combat["attack-mobs"]) return;
 
     const now = Date.now();
     // FIX: 1.9+ attack cooldown - respect at least 600ms between swings
@@ -1467,7 +1534,7 @@ function combatModule(bot, mcData) {
 
   // FIX: autoEat - check foodPoints property on the item directly (works reliably)
   bot.on("health", () => {
-    if (!config.combat["auto-eat"]) return;
+    if (!combat["auto-eat"]) return;
     try {
       if (bot.food < 14) {
         const food = bot.inventory
@@ -1494,7 +1561,7 @@ function bedModule(bot, mcData) {
 
   addInterval(async () => {
     if (!bot || !botState.connected) return;
-    if (!config.beds["place-night"]) return; // FIX: check flag (was always skipping before)
+    if (!beds["place-night"]) return; // FIX: check flag (was always skipping before)
 
     try {
       const isNight =
@@ -1535,15 +1602,15 @@ function chatModule(bot) {
     try {
       // FIX: send chat events to Discord if enabled
       if (
-        config.discord &&
-        config.discord.enabled &&
-        config.discord.events &&
-        config.discord.events.chat
+        discord &&
+        discord.enabled &&
+        discord.events &&
+        discord.events.chat
       ) {
         sendDiscordWebhook(`💬 **${username}**: ${message}`, 0x7289da);
       }
 
-      if (config.chat && config.chat.respond) {
+      if (chat && chat.respond) {
         const lowerMsg = message.toLowerCase();
         if (lowerMsg.includes("hello") || lowerMsg.includes("hi")) {
           bot.chat(`Hello, ${username}!`);
@@ -1596,10 +1663,10 @@ rl.on("line", (line) => {
 // ============================================================
 function sendDiscordWebhook(content, color = 0x0099ff) {
   if (
-    !config.discord ||
-    !config.discord.enabled ||
-    !config.discord.webhookUrl ||
-    config.discord.webhookUrl.includes("YOUR_DISCORD")
+    !discord ||
+    !discord.enabled ||
+    !discord.webhookUrl ||
+    discord.webhookUrl.includes("YOUR_DISCORD")
   )
     return;
 
@@ -1611,11 +1678,11 @@ function sendDiscordWebhook(content, color = 0x0099ff) {
   }
   lastDiscordSend = now;
 
-  const protocol = config.discord.webhookUrl.startsWith("https") ? https : http;
-  const urlParts = new URL(config.discord.webhookUrl);
+  const protocol = discord.webhookUrl.startsWith("https") ? https : http;
+  const urlParts = new URL(discord.webhookUrl);
 
   const payload = JSON.stringify({
-    username: config.name,
+    username: _name,
     embeds: [
       {
         description: content,
@@ -1768,10 +1835,10 @@ if (!IS_MINECRAFT_WORKER) {
   addLog("=".repeat(50));
   addLog("  Minecraft AFK Bot v2.5 - Bug-Fixed Edition");
   addLog("=".repeat(50));
-  addLog(`Server: ${config.server.ip}:${config.server.port}`);
-  addLog(`Version: ${config.server.version}`);
+  addLog(`Server: ${_server.ip}:${_server.port}`);
+  addLog(`Version: ${_server.version}`);
   addLog(
-    `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
+    `Auto-Reconnect: ${utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
   );
   addLog(
     "Dashboard: Enabled",
@@ -1782,20 +1849,84 @@ if (!IS_MINECRAFT_WORKER) {
 function publishMinecraftState() {
   if (!IS_MINECRAFT_WORKER || !process.send) return;
   try {
+    // ดึงข้อมูลจาก bot โดยตรง
+    const timeOfDay = bot?.time?.timeOfDay ?? null;
+    const fullTime = bot?.time?.time ?? bot?.time?.age ?? 0;
+    const worldDay = Math.floor(fullTime / 24000);
+
+    let worldTimeLabel = "Unknown";
+    if (timeOfDay !== null) {
+      if (timeOfDay < 1000) worldTimeLabel = "Sunrise";
+      else if (timeOfDay < 6000) worldTimeLabel = "Morning";
+      else if (timeOfDay < 12000) worldTimeLabel = "Afternoon";
+      else if (timeOfDay < 13000) worldTimeLabel = "Sunset";
+      else if (timeOfDay < 18000) worldTimeLabel = "Night";
+      else worldTimeLabel = "Midnight";
+    }
+
+    let weather = "Clear";
+    if (bot?.isRaining && bot?.thunderState > 0) weather = "Thunder";
+    else if (bot?.isRaining) weather = "Rain";
+
+    // if (bot) {
+    //   const sample = Object.values(bot.players).find(p => p.username === "Tamakano");
+    //   addLog(`[DEBUG] Tamakano player obj: ${JSON.stringify(Object.keys(sample || {}))}`);
+    //   addLog(`[DEBUG] Tamakano entity: ${JSON.stringify(sample?.entity?.position)}`);
+    //   addLog(`[DEBUG] Tamakano gamemode: ${sample?.gamemode}`);
+    // }
+
+    const dimension = bot?.game?.dimension ?? bot?.game?.dimensionName ?? "overworld";
+
+    // sessionTicks สำหรับ playtime
+    const sessionTicks = botState.spawnAge != null
+      ? (bot?.time?.age ?? 0) - botState.spawnAge
+      : 0;
+
+    const botDimension = bot?.game?.dimension ?? bot?.game?.dimensionName ?? "overworld";
+    const botPos = bot?.entity?.position;
+
+    const playerData = bot
+      ? Object.values(bot.players)
+          .filter(p => p.username)
+          .map(p => {
+            const sameWorld = !!p.entity;
+            // ใช้ค่าที่ track ไว้จาก chat ถ้ามี ไม่งั้นใช้ logic เดิม
+            const trackedDim = playerDimensions[p.username];
+            const playerDim = trackedDim
+              ? trackedDim
+              : sameWorld ? botDimension : "unknown";
+            const nearby = sameWorld && botPos && p.entity?.position
+              ? botPos.distanceTo(p.entity.position) < 50
+              : false;
+            return {
+              name: p.username,
+              dimension: playerDim,
+              nearby: nearby,
+            };
+          })
+      : [];
+
     process.send({
       type: "state",
       payload: {
         connected: botState.connected,
         reconnecting: isReconnecting,
         coords: bot?.entity?.position || null,
-        playerCount: bot ? Object.keys(bot.players).length : 0,
-        playerNames: bot ? Object.keys(bot.players) : [],
+        playerCount: playerData.length,
+        playerNames: playerData.map(p => p.name),
+        playerData: playerData,
+        worldDay: worldDay,
+        sessionTicks: sessionTicks > 0 ? sessionTicks : 0,
         health: bot ? bot.health : 20,
         food: bot ? bot.food : 20,
         lastActivity: botState.lastActivity,
         lastPacket: botState.lastPacket,
         reconnectAttempts: botState.reconnectAttempts,
-        hasBot: !!bot
+        hasBot: !!bot,
+        // ← ส่วนที่เพิ่มใหม่
+        worldTime: worldTimeLabel,
+        weather: weather,
+        dimension: dimension,
       }
     });
   } catch (e) {}
@@ -1813,8 +1944,8 @@ async function main() {
 
       if (message.type === "start") {
         if (message.payload && message.payload.ip) {
-          config.server.ip = message.payload.ip;
-          config.server.port = parseInt(message.payload.port, 10);
+          _server.ip = message.payload.ip;
+          _server.port = parseInt(message.payload.port, 10);
         }
         botRunning = true;
         createBot();
