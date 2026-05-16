@@ -1022,24 +1022,13 @@ async function createBot() {
 
     // FIX: 'end' is the single reconnect trigger
     bot.on("end", (reason) => {
-      isConnecting = false;
-      addLog(`[Bot] Disconnected: ${reason || "socketClosed"}`);
-      botState.connected = false;
-      clearAllIntervals();
-      spawnHandled = false; // reset for next connection
-
-      if (
-        discord &&
-        discord.events &&
-        discord.events.disconnect
-      ) {
-        sendDiscordWebhook(
-          `[-] **Disconnected**: ${reason || "Unknown"}`,
-          0xf87171,
-        );
+      // ไม่ notify ถ้าเป็น keepAlive error หรือ timeout ธรรมดา
+      const skipNotify = ["keepAliveError", "socketClosed", "disconnect.quitting"]
+        .some(r => reason?.includes(r));
+      
+      if (!skipNotify) {
+        notifyAternosToStart("bot-disconnected");
       }
-
-      // ALWAYS reconnect — bot must never leave the server
       scheduleReconnect();
     });
 
